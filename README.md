@@ -1,2 +1,243 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WorkLog Pro - Cloud Sync</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & Libraries -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;700&display=swap');
+        body { font-family: 'Sarabun', sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(10px); }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+    <div id="root"></div>
+
+    <!-- Firebase SDK (Version 9+ Compatibility) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, deleteDoc, doc, orderBy } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+        // *** ใส่ค่า Config จาก Firebase Console ของคุณที่นี่ ***
+        const firebaseConfig = {
+            apiKey: "AIzaSy...", 
+            authDomain: "your-project.firebaseapp.com",
+            projectId: "your-project",
+            storageBucket: "your-project.appspot.com",
+            messagingSenderId: "123456789",
+            appId: "1:123456789:web:abcdef"
+        };
+
+        // ส่งตัวแปร Firebase ไปที่ Window เพื่อให้ React เรียกใช้ได้
+        try {
+            const app = initializeApp(firebaseConfig);
+            window.fb = {
+                auth: getAuth(app),
+                db: getFirestore(app),
+                collection, addDoc, onSnapshot, query, serverTimestamp, deleteDoc, doc, orderBy,
+                signInAnonymously, onAuthStateChanged
+            };
+            console.log("Firebase initialized");
+        } catch (e) {
+            console.error("Firebase Init Error:", e);
+        }
+    </script>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [history, setHistory] = useState([]);
+            const [showModal, setShowModal] = useState(false);
+            const [loading, setLoading] = useState(false);
+            const [form, setForm] = useState({ title: '', detail: '', image: null });
+            const [search, setSearch] = useState('');
+
+            useEffect(() => {
+                const checkFB = setInterval(() => {
+                    if (window.fb) {
+                        clearInterval(checkFB);
+                        initApp();
+                    }
+                }, 500);
+                return () => clearInterval(checkFB);
+            }, []);
+
+            const initApp = () => {
+                const { auth, db, collection, query, onSnapshot, orderBy, signInAnonymously, onAuthStateChanged } = window.fb;
+                
+                signInAnonymously(auth).catch(console.error);
+                onAuthStateChanged(auth, setUser);
+
+                const q = query(collection(db, 'work_logs'), orderBy('timestamp', 'desc'));
+                onSnapshot(q, (snapshot) => {
+                    const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                    setHistory(data);
+                });
+                
+                // Initialize Lucide Icons
+                setTimeout(() => lucide.createIcons(), 500);
+            };
+
+            const handleImage = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => setForm({...form, image: reader.result});
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const saveLog = async () => {
+                if (!form.title || !form.image) return alert("กรุณากรอกชื่อและถ่ายรูป");
+                setLoading(true);
+                try {
+                    const { db, collection, addDoc, serverTimestamp } = window.fb;
+                    await addDoc(collection(db, 'work_logs'), {
+                        ...form,
+                        timestamp: serverTimestamp()
+                    });
+                    setForm({ title: '', detail: '', image: null });
+                    setShowModal(false);
+                } catch (e) {
+                    alert("บันทึกไม่สำเร็จ: " + e.message);
+                }
+                setLoading(false);
+            };
+
+            const deleteLog = async (id) => {
+                if (confirm("ลบข้อมูลนี้?")) {
+                    const { db, doc, deleteDoc } = window.fb;
+                    await deleteDoc(doc(db, 'work_logs', id));
+                }
+            };
+
+            const filtered = history.filter(h => h.title?.includes(search));
+
+            useEffect(() => lucide.createIcons(), [history, showModal]);
+
+            return (
+                <div className="min-h-screen">
+                    {/* Header */}
+                    <nav className="bg-indigo-700 text-white p-4 sticky top-0 z-40 shadow-lg flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                            <i data-lucide="cloud" className="w-6 h-6"></i>
+                            <h1 className="font-bold text-lg">WorkLog Cloud</h1>
+                        </div>
+                        <div className="text-[10px] bg-indigo-800 px-3 py-1 rounded-full border border-indigo-400">
+                            {user ? 'ONLINE' : 'CONNECTING...'}
+                        </div>
+                    </nav>
+
+                    <main className="max-w-2xl mx-auto p-4 pb-24">
+                        {/* Search */}
+                        <div className="relative mb-6">
+                            <input 
+                                type="text" 
+                                placeholder="ค้นหา..." 
+                                className="w-full p-4 pl-12 rounded-2xl border-none shadow-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                                onChange={(e) => setSearch(e.target.value)}
+                            />
+                            <i data-lucide="search" className="absolute left-4 top-4 text-slate-300 w-5 h-5"></i>
+                        </div>
+
+                        {/* List */}
+                        <div className="space-y-4">
+                            {filtered.map(item => (
+                                <div key={item.id} className="bg-white rounded-3xl overflow-hidden shadow-sm border border-slate-100 flex flex-col group">
+                                    <img src={item.image} className="h-48 w-full object-cover" />
+                                    <div className="p-5 flex justify-between items-start">
+                                        <div>
+                                            <h3 className="font-bold text-lg">{item.title}</h3>
+                                            <p className="text-slate-500 text-sm mt-1">{item.detail}</p>
+                                        </div>
+                                        <button onClick={() => deleteLog(item.id)} className="text-slate-200 hover:text-red-500 transition-colors">
+                                            <i data-lucide="trash-2" className="w-5 h-5"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </main>
+
+                    {/* Floating Button */}
+                    <button 
+                        onClick={() => setShowModal(true)}
+                        className="fixed bottom-6 right-6 bg-indigo-600 text-white w-16 h-16 rounded-full shadow-2xl flex items-center justify-center hover:scale-110 active:scale-95 transition-all z-50"
+                    >
+                        <i data-lucide="plus" className="w-8 h-8"></i>
+                    </button>
+
+                    {/* Modal */}
+                    {showModal && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-4 z-[100]">
+                            <div className="bg-white w-full max-w-lg rounded-t-[2.5rem] md:rounded-[2.5rem] p-8 animate-in slide-in-from-bottom duration-300 overflow-y-auto max-h-[90vh]">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h2 className="text-2xl font-bold">บันทึกงานใหม่</h2>
+                                    <button onClick={() => setShowModal(false)} className="bg-slate-100 p-2 rounded-xl"><i data-lucide="x"></i></button>
+                                </div>
+                                
+                                <div className="space-y-6">
+                                    <label className="block w-full h-48 border-2 border-dashed border-slate-200 rounded-[2rem] flex flex-col items-center justify-center cursor-pointer bg-slate-50 relative overflow-hidden">
+                                        {form.image ? (
+                                            <img src={form.image} className="w-full h-full object-cover" />
+                                        ) : (
+                                            <div className="text-center">
+                                                <i data-lucide="camera" className="mx-auto w-10 h-10 text-slate-300 mb-2"></i>
+                                                <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">แตะเพื่อถ่ายรูป</span>
+                                            </div>
+                                        )}
+                                        <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImage} />
+                                    </label>
+
+                                    <input 
+                                        type="text" 
+                                        placeholder="ชื่อโครงการ / หัวข้องาน" 
+                                        className="w-full p-4 bg-slate-50 rounded-2xl outline-none border border-transparent focus:border-indigo-500 font-bold"
+                                        value={form.title}
+                                        onChange={e => setForm({...form, title: e.target.value})}
+                                    />
+                                    
+                                    <textarea 
+                                        placeholder="รายละเอียด..." 
+                                        className="w-full p-4 bg-slate-50 rounded-2xl outline-none border border-transparent focus:border-indigo-500"
+                                        rows="2"
+                                        value={form.detail}
+                                        onChange={e => setForm({...form, detail: e.target.value})}
+                                    />
+
+                                    <button 
+                                        onClick={saveLog} 
+                                        disabled={loading}
+                                        className="w-full py-5 bg-indigo-600 text-white rounded-[2rem] font-bold text-lg shadow-xl shadow-indigo-100 disabled:bg-slate-200 flex items-center justify-center gap-2"
+                                    >
+                                        {loading ? <i data-lucide="loader-2" className="animate-spin"></i> : <i data-lucide="upload-cloud"></i>}
+                                        {loading ? "กำลังส่งข้อมูล..." : "บันทึกข้อมูล"}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
+
 # viewport
 ระบบบันทึกประวัติงานด้วยภาพถ่าย
