@@ -31,11 +31,6 @@
         }
         .animate-pop { animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         @keyframes pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
-        
-        .loading-pulse {
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
     </style>
 </head>
 <body>
@@ -46,38 +41,49 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-work-log';
-
-        // ส่ง Object ไปให้ React ใช้งาน
-        window.fb = { auth, db, collection, addDoc, onSnapshot, query, serverTimestamp, orderBy, appId, signInAnonymously, signInWithCustomToken, onAuthStateChanged };
+        // เก็บฟังก์ชันไว้ใน Global เพื่อให้ React เรียกใช้
+        window.FirebaseCore = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, orderBy };
     </script>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
         const App = () => {
             const [user, setUser] = useState(null);
             const [reports, setReports] = useState([]);
             const [isAdding, setIsAdding] = useState(false);
-            const [status, setStatus] = useState('loading'); // loading, ready, error
+            const [status, setStatus] = useState('connecting'); // connecting, ready, error
             const [form, setForm] = useState({ title: '', detail: '', image: null });
             const [aiProcessing, setAiProcessing] = useState(false);
+            const firebaseRef = useRef(null);
 
-            // 1. จัดการ Authentication
+            // 1. Initialize Firebase & Auth
             useEffect(() => {
-                const init = async () => {
-                    if (!window.fb) return;
-                    const { auth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = window.fb;
+                const initFirebase = async () => {
                     try {
+                        if (!window.FirebaseCore) {
+                            // ถ้า Library ยังไม่โหลด ให้รอ 1 วินาทีแล้วลองใหม่
+                            setTimeout(initFirebase, 1000);
+                            return;
+                        }
+
+                        const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore } = window.FirebaseCore;
+                        
+                        const firebaseConfig = JSON.parse(__firebase_config);
+                        const app = initializeApp(firebaseConfig);
+                        const auth = getAuth(app);
+                        const db = getFirestore(app);
+                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-work-log';
+
+                        firebaseRef.current = { auth, db, appId };
+
+                        // ดำเนินการ Login
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
                             await signInAnonymously(auth);
                         }
+
                         onAuthStateChanged(auth, (u) => {
                             if (u) {
                                 setUser(u);
@@ -85,17 +91,20 @@
                             }
                         });
                     } catch (err) {
-                        console.error("Auth Fail:", err);
+                        console.error("Firebase Init Error:", err);
                         setStatus('error');
                     }
                 };
-                init();
+
+                initFirebase();
             }, []);
 
-            // 2. ดึงข้อมูลแบบ Real-time
+            // 2. Real-time Data Listener
             useEffect(() => {
-                if (!user || !window.fb) return;
-                const { db, collection, query, onSnapshot, orderBy, appId } = window.fb;
+                if (!user || !firebaseRef.current) return;
+                
+                const { db, appId } = firebaseRef.current;
+                const { collection, query, onSnapshot, orderBy } = window.FirebaseCore;
                 
                 const q = query(
                     collection(db, 'artifacts', appId, 'public', 'data', 'work_reports'), 
@@ -107,7 +116,7 @@
                         setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
                     }, 
                     (err) => {
-                        console.error("Firestore Error:", err);
+                        console.error("Firestore Listen Error:", err);
                     }
                 );
                 return () => unsubscribe();
@@ -126,7 +135,7 @@
                 if (!form.image) return;
                 setAiProcessing(true);
                 try {
-                    const apiKey = ""; // ใส่ API Key ของคุณ
+                    const apiKey = ""; // API Key 
                     const payload = {
                         contents: [{ 
                             parts: [
@@ -152,7 +161,8 @@
 
             const submitReport = async () => {
                 if (!form.title || !form.image) return;
-                const { db, collection, addDoc, serverTimestamp, appId } = window.fb;
+                const { db, appId } = firebaseRef.current;
+                const { collection, addDoc, serverTimestamp } = window.FirebaseCore;
                 try {
                     await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'work_reports'), {
                         ...form,
@@ -168,94 +178,87 @@
 
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [status, reports, isAdding, aiProcessing]);
 
-            if (status === 'loading') return (
-                <div className="h-screen flex flex-col items-center justify-center bg-white">
-                    <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="mt-6 font-bold text-slate-400 text-xs uppercase tracking-widest">กำลังเชื่อมต่อระบบ...</p>
+            if (status === 'connecting') return (
+                <div className="h-screen flex flex-col items-center justify-center bg-white p-10 text-center">
+                    <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="mt-6 font-bold text-slate-900 text-sm uppercase tracking-widest">กำลังเชื่อมต่อฐานข้อมูล...</p>
+                    <p className="text-slate-400 text-xs mt-2">หากค้างเกิน 10 วินาที โปรดลองรีเฟรชหน้าพรีวิว</p>
                 </div>
             );
 
             if (status === 'error') return (
                 <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-10 text-center">
-                    <i data-lucide="alert-circle" className="w-12 h-12 text-red-500 mb-4"></i>
-                    <h2 className="text-lg font-bold text-red-900 uppercase">การเชื่อมต่อล้มเหลว</h2>
-                    <p className="text-red-700 text-sm mt-2">โปรดตรวจสอบว่าเปิด Anonymous Auth และตั้ง Rules ถูกต้องแล้ว</p>
-                    <button onClick={() => window.location.reload()} className="mt-6 px-6 py-3 bg-red-600 text-white rounded-xl font-bold text-xs uppercase">ลองใหม่</button>
+                    <i data-lucide="shield-off" className="w-16 h-16 text-red-500 mb-6"></i>
+                    <h2 className="text-lg font-black text-red-900 uppercase">การเชื่อมต่อล้มเหลว</h2>
+                    <p className="text-red-700 text-sm mt-3">โปรดตรวจสอบว่าเปิด <b>Anonymous Auth</b> และตั้ง <b>Rules</b> ใน Firebase ถูกต้องแล้ว</p>
+                    <button onClick={() => window.location.reload()} className="mt-8 px-8 py-4 bg-red-600 text-white rounded-2xl font-black text-xs uppercase shadow-xl shadow-red-100">ลองใหม่</button>
                 </div>
             );
 
             return (
                 <div className="app-card relative">
-                    {/* Header */}
-                    <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-5 border-b border-slate-100 flex justify-between items-center">
+                    <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md px-6 py-5 border-b border-slate-100 flex justify-between items-center">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-indigo-100">
+                            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
                                 <i data-lucide="zap" className="w-5 h-5 fill-current"></i>
                             </div>
-                            <h1 className="text-xl font-black text-slate-900 tracking-tighter uppercase italic">Work<span className="text-indigo-600 italic">Sync</span></h1>
+                            <h1 className="text-xl font-black text-slate-900 tracking-tighter uppercase italic">Work<span className="text-indigo-600">Sync</span></h1>
                         </div>
                         <div className="flex items-center gap-2 bg-green-50 px-3 py-1 rounded-full border border-green-100">
                             <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-                            <span className="text-[10px] font-bold text-green-600 uppercase">เชื่อมต่อแล้ว</span>
+                            <span className="text-[10px] font-bold text-green-600 uppercase">Online</span>
                         </div>
                     </header>
 
-                    {/* Timeline Content */}
                     <main className="flex-1 p-6 space-y-8 pb-32">
                         {reports.length === 0 ? (
                             <div className="py-24 text-center">
                                 <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                                    <i data-lucide="cloud-off" className="w-8 h-8 text-slate-200"></i>
+                                    <i data-lucide="layout" className="w-8 h-8 text-slate-200"></i>
                                 </div>
-                                <h3 className="text-slate-900 font-bold text-sm uppercase tracking-widest">ยังไม่มีข้อมูลใน Cloud</h3>
-                                <p className="text-slate-400 text-xs mt-2">กดปุ่มด้านล่างเพื่อเริ่มบันทึกงานแรกของคุณ</p>
+                                <h3 className="text-slate-900 font-bold text-sm uppercase tracking-widest">ยังไม่มีบันทึกงาน</h3>
+                                <p className="text-slate-400 text-xs mt-2">ถ่ายภาพหน้างานเพื่อเริ่มสร้างรายงานฉบับแรก</p>
                             </div>
                         ) : (
-                            reports.map((report, idx) => (
-                                <div key={report.id} className="animate-pop border-l-2 border-indigo-100 pl-6 relative">
-                                    <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-white border-4 border-indigo-600"></div>
-                                    <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden hover:shadow-lg transition-shadow">
-                                        <img src={report.image} className="w-full h-52 object-cover" alt="work site" />
-                                        <div className="p-6">
-                                            <div className="flex justify-between items-start mb-3">
-                                                <h3 className="font-bold text-lg text-slate-900 leading-tight">{report.title}</h3>
-                                                <span className="text-[9px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-md">
-                                                    {report.timestamp ? new Date(report.timestamp.seconds * 1000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'Just now'}
-                                                </span>
-                                            </div>
-                                            <p className="text-slate-500 text-sm leading-relaxed">{report.detail}</p>
+                            reports.map((report) => (
+                                <div key={report.id} className="animate-pop bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden hover:shadow-xl transition-all duration-300">
+                                    <img src={report.image} className="w-full h-56 object-cover" />
+                                    <div className="p-6">
+                                        <div className="flex justify-between items-start mb-3">
+                                            <h3 className="font-bold text-lg text-slate-900 leading-tight">{report.title}</h3>
+                                            <span className="text-[9px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-md">
+                                                {report.timestamp ? new Date(report.timestamp.seconds * 1000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'Pending'}
+                                            </span>
                                         </div>
+                                        <p className="text-slate-500 text-sm leading-relaxed">{report.detail}</p>
                                     </div>
                                 </div>
                             ))
                         )}
                     </main>
 
-                    {/* Floating Action Button */}
                     <div className="fixed bottom-10 left-0 right-0 px-6 flex justify-center z-50 pointer-events-none">
                         <button 
                             onClick={() => setIsAdding(true)}
-                            className="pointer-events-auto bg-slate-900 text-white px-10 py-5 rounded-full shadow-2xl flex items-center gap-3 font-bold text-sm uppercase tracking-widest active:scale-95 transition-all hover:bg-indigo-600"
+                            className="pointer-events-auto bg-slate-900 text-white px-10 py-5 rounded-full shadow-2xl flex items-center gap-3 font-black text-sm uppercase tracking-widest active:scale-95 transition-all hover:bg-indigo-600"
                         >
                             <i data-lucide="camera" className="w-5 h-5"></i>
-                            Capture Report
+                            Capture Work
                         </button>
                     </div>
 
-                    {/* New Report Modal */}
                     {isAdding && (
                         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-                            <div className="bg-white w-full max-w-lg rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl animate-pop max-h-[90vh] overflow-y-auto">
+                            <div className="bg-white w-full max-w-lg rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl animate-pop max-h-[95vh] overflow-y-auto">
                                 <div className="flex justify-between items-center mb-8">
-                                    <h2 className="text-xl font-black uppercase text-slate-900 tracking-tight">เพิ่มบันทึกใหม่</h2>
+                                    <h2 className="text-xl font-black uppercase text-slate-900 tracking-tight">เพิ่มรายงานใหม่</h2>
                                     <button onClick={() => setIsAdding(false)} className="p-2 bg-slate-100 rounded-full hover:bg-red-50 hover:text-red-500 transition-colors">
                                         <i data-lucide="x" className="w-5 h-5"></i>
                                     </button>
                                 </div>
 
                                 <div className="space-y-6">
-                                    {/* Image Selector */}
-                                    <div className="aspect-video bg-slate-50 rounded-[2.5rem] border-4 border-dashed border-slate-100 flex items-center justify-center relative overflow-hidden group">
+                                    <div className="aspect-video bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-100 flex items-center justify-center relative overflow-hidden group">
                                         {form.image ? (
                                             <>
                                                 <img src={form.image} className="w-full h-full object-cover" />
@@ -265,12 +268,12 @@
                                                     className="absolute bottom-4 right-4 bg-white/95 px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2 text-[10px] font-black uppercase text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all border border-indigo-50"
                                                 >
                                                     {aiProcessing ? <i data-lucide="loader-2" className="animate-spin w-4 h-4"></i> : <i data-lucide="sparkles" className="w-4 h-4"></i>}
-                                                    {aiProcessing ? "กำลังวิเคราะห์..." : "AI สรุปรายงาน"}
+                                                    {aiProcessing ? "กำลังวิเคราะห์..." : "AI เขียนรายงานให้"}
                                                 </button>
                                             </>
                                         ) : (
                                             <label className="flex flex-col items-center gap-3 cursor-pointer py-10 w-full h-full justify-center">
-                                                <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm group-hover:scale-110 transition-transform">
+                                                <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm">
                                                     <i data-lucide="plus" className="w-8 h-8 text-slate-300"></i>
                                                 </div>
                                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">เลือกรูปถ่ายหน้างาน</span>
@@ -279,14 +282,13 @@
                                         )}
                                     </div>
 
-                                    {/* Form Fields */}
                                     <div className="space-y-4">
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-slate-300 uppercase tracking-widest ml-4">หัวข้อ</label>
                                             <input 
                                                 type="text" 
-                                                placeholder="เช่น งานติดตั้งเสร็จสิ้น..." 
-                                                className="w-full p-5 bg-slate-50 rounded-2xl outline-none focus:ring-2 ring-indigo-500/20 font-bold text-slate-800 transition-all"
+                                                placeholder="หัวข้อรายงาน..." 
+                                                className="w-full p-5 bg-slate-50 rounded-2xl outline-none font-bold text-slate-800 transition-all border-2 border-transparent focus:border-indigo-100 focus:bg-white"
                                                 value={form.title}
                                                 onChange={e => setForm({...form, title: e.target.value})}
                                             />
@@ -294,8 +296,8 @@
                                         <div className="space-y-1">
                                             <label className="text-[10px] font-bold text-slate-300 uppercase tracking-widest ml-4">รายละเอียด</label>
                                             <textarea 
-                                                placeholder="ระบุรายละเอียดเพิ่มเติม..." 
-                                                className="w-full p-5 bg-slate-50 rounded-2xl outline-none focus:ring-2 ring-indigo-500/20 min-h-[120px] text-slate-600 text-sm leading-relaxed transition-all"
+                                                placeholder="รายละเอียดรายงาน..." 
+                                                className="w-full p-5 bg-slate-50 rounded-2xl outline-none min-h-[120px] text-slate-600 text-sm leading-relaxed transition-all border-2 border-transparent focus:border-indigo-100 focus:bg-white"
                                                 value={form.detail}
                                                 onChange={e => setForm({...form, detail: e.target.value})}
                                             ></textarea>
@@ -305,9 +307,9 @@
                                     <button 
                                         onClick={submitReport}
                                         disabled={!form.title || !form.image}
-                                        className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black uppercase tracking-[0.3em] text-xs shadow-2xl disabled:opacity-20 transition-all active:scale-95"
+                                        className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black uppercase tracking-[0.3em] text-xs shadow-2xl disabled:opacity-20 transition-all active:scale-95 hover:bg-indigo-600"
                                     >
-                                        บันทึกลง Cloud
+                                        บันทึกลงคลาวด์
                                     </button>
                                 </div>
                             </div>
