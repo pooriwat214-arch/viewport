@@ -21,7 +21,8 @@
         .btn-primary { background: #4f46e5; transition: all 0.3s ease; }
         .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
         .btn-primary:active { transform: translateY(0); }
-        video { transform: scaleX(-1); } /* Mirror for front camera, optional */
+        /* ลบ Mirror ออกเพื่อให้ภาพจากกล้องหลังอ่านตัวหนังสือได้ง่ายขึ้น */
+        video { transform: none; } 
     </style>
 </head>
 <body>
@@ -133,12 +134,16 @@
                 return () => unsubscribe();
             }, [status, user]);
 
-            // Camera Functions
+            // Camera Functions พร้อมปรับความชัด
             const startCamera = async () => {
                 setIsCameraActive(true);
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ 
-                        video: { facingMode: "environment" }, // ใช้กล้องหลังมือถือ
+                        video: { 
+                            facingMode: "environment",
+                            width: { ideal: 1920 }, // ตั้งเป้าที่ความละเอียด Full HD
+                            height: { ideal: 1080 }
+                        }, 
                         audio: false 
                     });
                     if (videoRef.current) {
@@ -162,11 +167,19 @@
                 const video = videoRef.current;
                 const canvas = canvasRef.current;
                 if (video && canvas) {
+                    // ใช้ขนาดจริงจากวิดีโอเพื่อให้ภาพชัดที่สุด
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
                     const ctx = canvas.getContext('2d');
+                    
+                    // ปรับแต่งคุณภาพการวาดภาพ
+                    ctx.imageSmoothingEnabled = true;
+                    ctx.imageSmoothingQuality = 'high';
+                    
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    const imageData = canvas.toDataURL('image/jpeg');
+                    
+                    // บันทึกภาพแบบ JPEG คุณภาพสูงสุด (1.0)
+                    const imageData = canvas.toDataURL('image/jpeg', 1.0);
                     setForm({ ...form, image: imageData });
                     stopCamera();
                 }
