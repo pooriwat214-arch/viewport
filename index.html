@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WorkSync Pro - Enterprise Edition</title>
+    <title>WorkSync Pro - Enterprise Download</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -12,14 +12,15 @@
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700;800&display=swap');
-        body { font-family: 'Sarabun', sans-serif; background-color: #f1f5f9; color: #0f172a; }
-        .order-card { background: white; border-radius: 2rem; border: 1px solid #e2e8f0; transition: all 0.3s ease; }
-        .order-card:hover { transform: translateY(-4px); box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1); }
-        .image-preview-ring { ring: 2px solid transparent; transition: all 0.2s; }
-        .image-preview-ring:hover { ring: 2px solid #4f46e5; }
-        .loading-shimmer { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
-        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        body { font-family: 'Sarabun', sans-serif; background-color: #f8fafc; color: #0f172a; }
+        .order-card { background: white; border-radius: 2.5rem; border: 1px solid #e2e8f0; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        .order-card:hover { transform: translateY(-8px); box-shadow: 0 30px 50px -12px rgb(0 0 0 / 0.1); border-color: #4f46e5; }
+        .image-container { position: relative; overflow: hidden; border-radius: 1.5rem; aspect-ratio: 1; }
+        .image-action-btn { position: absolute; top: 0.5rem; right: 0.5rem; opacity: 0; transform: translateY(-5px); transition: all 0.2s; }
+        .image-container:hover .image-action-btn { opacity: 1; transform: translateY(0); }
+        .preview-overlay { background: rgba(0,0,0,0.95); z-index: 1000; }
         video { border-radius: 2rem; width: 100%; aspect-ratio: 4/3; object-fit: cover; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body>
@@ -48,30 +49,7 @@
             const videoRef = useRef(null);
             const canvasRef = useRef(null);
             const dbRef = useRef(null);
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'worksync-enterprise-v1';
-
-            // ฟังก์ชันจัดการขนาดภาพแบบ High-Quality แต่ไม่เกิน 1MB ต่อรูป
-            const processImage = (base64) => {
-                return new Promise((resolve) => {
-                    const img = new Image();
-                    img.src = base64;
-                    img.onload = () => {
-                        const canvas = document.createElement('canvas');
-                        let width = img.width;
-                        let height = img.height;
-                        // ถ้าภาพใหญ่เกินไป ย่อให้เหลือความกว้าง 1200px (ความละเอียดสูง)
-                        const MAX_SIZE = 1200;
-                        if (width > MAX_SIZE || height > MAX_SIZE) {
-                            if (width > height) { height *= MAX_SIZE / width; width = MAX_SIZE; }
-                            else { width *= MAX_SIZE / height; height = MAX_SIZE; }
-                        }
-                        canvas.width = width;
-                        canvas.height = height;
-                        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-                        resolve(canvas.toDataURL('image/jpeg', 0.8)); // คุณภาพ 80% ชัดเจนมาก
-                    };
-                });
-            };
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'worksync-enterprise-dl';
 
             useEffect(() => {
                 const init = async () => {
@@ -90,7 +68,6 @@
                 init();
             }, []);
 
-            // โหลดข้อมูลแบบ Real-time พร้อมดึงรูปจาก Sub-collection
             useEffect(() => {
                 if (!user || !dbRef.current) return;
                 const { collection, query, onSnapshot, orderBy, getDocs } = window.FB;
@@ -101,7 +78,6 @@
                     const orderData = await Promise.all(snapshot.docs.map(async (orderDoc) => {
                         const id = orderDoc.id;
                         const data = orderDoc.data();
-                        // ดึงรูปภาพจาก sub-collection ของแต่ละ order
                         const imgsSnap = await getDocs(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders', id, 'images'));
                         const images = imgsSnap.docs.map(d => d.data().src);
                         return { id, ...data, images };
@@ -109,6 +85,23 @@
                     setOrders(orderData);
                 });
             }, [user]);
+
+            const downloadSingleImage = (base64, filename) => {
+                const link = document.createElement('a');
+                link.href = base64;
+                link.download = filename || `worksync-image-${Date.now()}.jpg`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            const downloadAllImages = async (order) => {
+                order.images.forEach((img, index) => {
+                    setTimeout(() => {
+                        downloadSingleImage(img, `Order-${order.title}-${index + 1}.jpg`);
+                    }, index * 300); // ดีเลย์เพื่อไม่ให้เบราว์เซอร์บล็อกการโหลดหลายไฟล์พร้อมกัน
+                });
+            };
 
             const startCamera = async () => {
                 setIsCameraActive(true);
@@ -123,9 +116,8 @@
                 const c = canvasRef.current;
                 c.width = v.videoWidth; c.height = v.videoHeight;
                 c.getContext('2d').drawImage(v, 0, 0);
-                const raw = c.toDataURL('image/jpeg', 0.95);
-                const processed = await processImage(raw);
-                setForm(f => ({ ...f, tempImages: [...f.tempImages, processed].slice(0, 10) })); // รองรับสูงสุด 10 รูป
+                const raw = c.toDataURL('image/jpeg', 0.85);
+                setForm(f => ({ ...f, tempImages: [...f.tempImages, raw].slice(0, 10) }));
                 if (form.tempImages.length + 1 >= 5) {
                     if (v.srcObject) v.srcObject.getTracks().forEach(t => t.stop());
                     setIsCameraActive(false);
@@ -136,117 +128,120 @@
                 if (!form.title || form.tempImages.length === 0) return;
                 setIsSaving(true);
                 try {
-                    const { collection, addDoc, serverTimestamp, doc } = window.FB;
-                    
-                    // 1. สร้างตัวเอกสาร Order หลักก่อน
+                    const { collection, addDoc, serverTimestamp } = window.FB;
                     const orderRef = await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders'), {
                         title: form.title,
                         detail: form.detail,
                         timestamp: serverTimestamp(),
                         uid: user.uid,
-                        imageCount: form.tempImages.length
                     });
-
-                    // 2. บันทึกรูปภาพแยกเป็นใบๆ ลงใน Sub-collection (แก้ปัญหา 1MB Limit)
                     const imagesRef = collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders', orderRef.id, 'images');
                     for (const imgSrc of form.tempImages) {
                         await addDoc(imagesRef, { src: imgSrc, createdAt: serverTimestamp() });
                     }
-
                     setForm({ title: '', detail: '', tempImages: [] });
                     setIsAdding(false);
-                } catch (e) {
-                    alert("บันทึกผิดพลาด: " + e.message);
-                } finally { setIsSaving(false); }
+                } catch (e) { alert(e.message); } finally { setIsSaving(false); }
             };
 
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [user, orders, isAdding, isCameraActive, form.tempImages]);
 
             return (
-                <div className="min-h-screen">
-                    {/* Top Bar */}
-                    <nav className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex justify-between items-center">
+                <div className="min-h-screen pb-20">
+                    <nav className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 px-8 py-5 flex justify-between items-center">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white">
-                                <i data-lucide="layout-grid"></i>
+                            <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-indigo-100">
+                                <i data-lucide="download-cloud"></i>
                             </div>
-                            <h1 className="font-black text-xl tracking-tighter text-slate-900">WORKSYNC <span className="text-indigo-600">ENTERPRISE</span></h1>
+                            <div>
+                                <h1 className="font-black text-xl text-slate-900 leading-none">WORKSYNC <span className="text-indigo-600">DL</span></h1>
+                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">Enterprise Asset Manager</p>
+                            </div>
                         </div>
-                        <button onClick={() => setIsAdding(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-2.5 rounded-full font-bold text-sm shadow-lg shadow-indigo-100 transition-all">
-                            + สร้างออเดอร์
+                        <button onClick={() => setIsAdding(true)} className="bg-slate-900 hover:bg-black text-white px-8 py-3 rounded-2xl font-bold text-sm transition-all shadow-xl shadow-slate-200">
+                            + บันทึกออเดอร์ใหม่
                         </button>
                     </nav>
 
-                    <main className="max-w-7xl mx-auto p-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <main className="max-w-7xl mx-auto p-8">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                             {orders.map(order => (
-                                <div key={order.id} className="order-card p-6 flex flex-col h-full">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <h3 className="font-black text-slate-900 text-lg leading-tight">{order.title}</h3>
-                                        <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded">
-                                            {order.timestamp ? new Date(order.timestamp.seconds * 1000).toLocaleDateString('th-TH') : '...'}
-                                        </span>
+                                <div key={order.id} className="order-card p-8 flex flex-col group/card">
+                                    <div className="flex justify-between items-start mb-6">
+                                        <div>
+                                            <h3 className="font-black text-slate-900 text-xl mb-1">{order.title}</h3>
+                                            <p className="text-[10px] font-bold text-indigo-500 uppercase tracking-tighter">
+                                                ID: {order.id.substring(0,8)}...
+                                            </p>
+                                        </div>
+                                        <button 
+                                            onClick={() => downloadAllImages(order)}
+                                            className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl hover:bg-indigo-600 hover:text-white transition-all shadow-sm"
+                                            title="ดาวน์โหลดทุกรูปในออเดอร์นี้"
+                                        >
+                                            <i data-lucide="download" className="w-5 h-5"></i>
+                                        </button>
                                     </div>
-                                    <p className="text-sm text-slate-500 mb-6 flex-grow">{order.detail || 'ไม่มีคำอธิบาย'}</p>
+                                    <p className="text-sm text-slate-500 mb-8 line-clamp-3 leading-relaxed flex-grow">{order.detail || 'ไม่มีข้อมูลเพิ่มเติม'}</p>
                                     
-                                    <div className="grid grid-cols-4 gap-2">
+                                    <div className="grid grid-cols-4 gap-3">
                                         {order.images?.map((img, i) => (
-                                            <div key={i} 
-                                                className="aspect-square rounded-xl overflow-hidden cursor-zoom-in image-preview-ring"
-                                                onClick={() => setActivePreview(img)}>
-                                                <img src={img} className="w-full h-full object-cover" loading="lazy" />
+                                            <div key={i} className="image-container group/img">
+                                                <img 
+                                                    src={img} 
+                                                    className="w-full h-full object-cover cursor-zoom-in hover:scale-110 transition-transform duration-500" 
+                                                    onClick={() => setActivePreview(img)} 
+                                                />
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); downloadSingleImage(img, `Order-${order.title}-img-${i+1}.jpg`); }}
+                                                    className="image-action-btn bg-white/90 backdrop-blur p-2 rounded-xl shadow-lg hover:bg-indigo-600 hover:text-white text-slate-700"
+                                                >
+                                                    <i data-lucide="arrow-down-to-line" className="w-3.5 h-3.5"></i>
+                                                </button>
                                             </div>
                                         ))}
+                                    </div>
+                                    <div className="mt-6 pt-6 border-t border-slate-50 flex justify-between items-center text-[10px] font-bold text-slate-300 uppercase tracking-widest">
+                                        <span>{order.images.length} รูปภาพ</span>
+                                        <span>{order.timestamp ? new Date(order.timestamp.seconds * 1000).toLocaleDateString() : ''}</span>
                                     </div>
                                 </div>
                             ))}
                         </div>
-
-                        {orders.length === 0 && (
-                            <div className="text-center py-40">
-                                <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                                    <i data-lucide="cloud-off" className="w-8 h-8 text-slate-300"></i>
-                                </div>
-                                <h2 className="text-slate-400 font-bold uppercase tracking-widest text-sm">ยังไม่มีข้อมูลในระบบ</h2>
-                            </div>
-                        )}
                     </main>
 
-                    {/* Modal: Add Order */}
+                    {/* Modal Add */}
                     {isAdding && (
-                        <div className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm flex items-end md:items-center justify-center p-0 md:p-6">
-                            <div className="bg-white w-full max-w-2xl rounded-t-[3rem] md:rounded-[3rem] p-8 md:p-10 shadow-2xl animate-in max-h-[92vh] overflow-y-auto">
-                                <div className="flex justify-between items-center mb-8">
-                                    <h2 className="text-2xl font-black text-slate-900 tracking-tight">บันทึกงานใหม่ (Unlimited Storage)</h2>
-                                    <button onClick={() => { setIsAdding(false); setIsCameraActive(false); }} className="text-slate-300 hover:text-slate-600 transition-colors">
-                                        <i data-lucide="x-circle" className="w-8 h-8"></i>
+                        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-md flex items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-2xl rounded-[3rem] p-10 shadow-2xl animate-in max-h-[90vh] overflow-y-auto scrollbar-hide">
+                                <div className="flex justify-between items-center mb-10">
+                                    <h2 className="text-3xl font-black text-slate-900 tracking-tight">เพิ่มรายการใหม่</h2>
+                                    <button onClick={() => { setIsAdding(false); setIsCameraActive(false); }} className="text-slate-200 hover:text-slate-400 transition-colors">
+                                        <i data-lucide="x-circle" className="w-10 h-10"></i>
                                     </button>
                                 </div>
 
-                                <div className="space-y-6">
+                                <div className="space-y-8">
                                     <div className="aspect-video bg-slate-900 rounded-[2.5rem] overflow-hidden relative shadow-inner">
                                         {isCameraActive ? (
                                             <>
                                                 <video ref={videoRef} autoPlay playsInline />
-                                                <button onClick={capture} className="absolute bottom-6 left-1/2 -translate-x-1/2 w-16 h-16 bg-white rounded-full flex items-center justify-center shadow-2xl active:scale-90 transition-transform">
-                                                    <div className="w-12 h-12 border-4 border-slate-900 rounded-full"></div>
+                                                <button onClick={capture} className="absolute bottom-8 left-1/2 -translate-x-1/2 w-20 h-20 bg-white rounded-full flex items-center justify-center shadow-2xl active:scale-90 transition-transform">
+                                                    <div className="w-14 h-14 border-4 border-slate-900 rounded-full"></div>
                                                 </button>
                                             </>
                                         ) : (
-                                            <div className="w-full h-full flex flex-col items-center justify-center gap-4">
-                                                <button onClick={startCamera} className="bg-white px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl flex items-center gap-2">
-                                                    <i data-lucide="camera" className="w-4 h-4"></i> ถ่ายรูปเพิ่ม ({form.tempImages.length}/10)
+                                            <div className="w-full h-full flex flex-col items-center justify-center gap-6">
+                                                <button onClick={startCamera} className="bg-white px-10 py-4 rounded-3xl font-black text-sm uppercase tracking-widest shadow-2xl flex items-center gap-3">
+                                                    <i data-lucide="camera" className="w-6 h-6"></i> ถ่ายรูป ({form.tempImages.length}/10)
                                                 </button>
-                                                <label className="text-[10px] font-bold text-slate-500 uppercase cursor-pointer hover:text-white transition-colors">
-                                                    หรือ เลือกจากไฟล์ขนาดใหญ่
+                                                <label className="text-xs font-bold text-slate-500 uppercase cursor-pointer hover:text-white transition-colors">
+                                                    หรือ เลือกรูปภาพจากเครื่อง
                                                     <input type="file" multiple className="hidden" accept="image/*" onChange={async (e) => {
                                                         const files = Array.from(e.target.files);
                                                         for (const file of files) {
                                                             const r = new FileReader();
-                                                            r.onload = async () => {
-                                                                const proc = await processImage(r.result);
-                                                                setForm(f => ({ ...f, tempImages: [...f.tempImages, proc].slice(0, 10) }));
-                                                            };
+                                                            r.onload = () => setForm(f => ({ ...f, tempImages: [...f.tempImages, r.result].slice(0, 10) }));
                                                             r.readAsDataURL(file);
                                                         }
                                                     }} />
@@ -255,40 +250,43 @@
                                         )}
                                     </div>
 
-                                    {/* Image Strip */}
                                     <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide">
                                         {form.tempImages.map((img, i) => (
                                             <div key={i} className="w-24 h-24 rounded-2xl overflow-hidden relative flex-shrink-0 group">
                                                 <img src={img} className="w-full h-full object-cover" />
-                                                <button onClick={() => setForm(f => ({...f, tempImages: f.tempImages.filter((_, idx) => idx !== i)}))} className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <i data-lucide="trash-2" className="w-3 h-3"></i>
+                                                <button onClick={() => setForm(f => ({...f, tempImages: f.tempImages.filter((_, idx) => idx !== i)}))} className="absolute inset-0 bg-red-600/80 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                    <i data-lucide="trash-2" className="w-6 h-6"></i>
                                                 </button>
-                                                <div className="absolute bottom-1 left-2 text-[8px] font-black text-white bg-black/40 px-2 py-0.5 rounded-full">IMG {i+1}</div>
                                             </div>
                                         ))}
                                     </div>
 
-                                    <div className="space-y-4">
-                                        <input placeholder="ชื่อลูกค้า / รหัสออเดอร์" className="w-full p-6 bg-slate-50 rounded-3xl font-bold border-none outline-none focus:ring-4 ring-indigo-50 transition-all text-lg" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
-                                        <textarea placeholder="บันทึกรายละเอียดเพิ่มเติม..." className="w-full p-6 bg-slate-50 rounded-3xl min-h-[120px] border-none outline-none focus:ring-4 ring-indigo-50 transition-all" value={form.detail} onChange={e => setForm({...form, detail: e.target.value})}></textarea>
+                                    <div className="space-y-5">
+                                        <input placeholder="ชื่อลูกค้า / รหัสออเดอร์" className="w-full p-7 bg-slate-50 rounded-[2rem] font-black border-none outline-none focus:ring-4 ring-indigo-50 transition-all text-xl" value={form.title} onChange={e => setForm({...form, title: e.target.value})} />
+                                        <textarea placeholder="บันทึกรายละเอียด..." className="w-full p-7 bg-slate-50 rounded-[2rem] min-h-[140px] border-none outline-none focus:ring-4 ring-indigo-50 transition-all" value={form.detail} onChange={e => setForm({...form, detail: e.target.value})}></textarea>
                                     </div>
 
-                                    <button onClick={saveOrder} disabled={!form.title || form.tempImages.length === 0 || isSaving} className="w-full py-6 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-sm shadow-xl shadow-indigo-100 disabled:opacity-20 transition-all active:scale-[0.98]">
-                                        {isSaving ? 'กำลังอัปโหลดข้อมูลขนาดใหญ่...' : 'ยืนยันบันทึกออเดอร์'}
+                                    <button onClick={saveOrder} disabled={!form.title || form.tempImages.length === 0 || isSaving} className="w-full py-7 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-sm shadow-2xl shadow-indigo-100 disabled:opacity-20 transition-all">
+                                        {isSaving ? 'กำลังบันทึกข้อมูล...' : 'บันทึกออเดอร์'}
                                     </button>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Full-screen Preview */}
+                    {/* Full Preview */}
                     {activePreview && (
-                        <div className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4 animate-in" onClick={() => setActivePreview(null)}>
-                            <button className="absolute top-8 right-8 text-white/50 hover:text-white">
-                                <i data-lucide="x" className="w-10 h-10"></i>
+                        <div className="fixed inset-0 z-[100] preview-overlay flex items-center justify-center p-8 animate-in" onClick={() => setActivePreview(null)}>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); downloadSingleImage(activePreview); }}
+                                className="absolute top-8 left-8 bg-white/10 hover:bg-indigo-600 text-white p-4 rounded-3xl backdrop-blur-md transition-all flex items-center gap-3 font-bold"
+                            >
+                                <i data-lucide="download"></i> ดาวน์โหลดรูปนี้
                             </button>
-                            <img src={activePreview} className="max-w-full max-h-[85vh] object-contain rounded-2xl shadow-2xl shadow-indigo-500/10" onClick={e => e.stopPropagation()} />
-                            <p className="mt-8 text-white/40 font-bold uppercase tracking-[0.5em] text-[10px]">WorkSync Enterprise Preview</p>
+                            <button className="absolute top-8 right-8 text-white/20 hover:text-white transition-colors">
+                                <i data-lucide="x" className="w-12 h-12"></i>
+                            </button>
+                            <img src={activePreview} className="max-w-full max-h-[85vh] object-contain rounded-3xl shadow-2xl" onClick={e => e.stopPropagation()} />
                         </div>
                     )}
 
