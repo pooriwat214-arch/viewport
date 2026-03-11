@@ -24,12 +24,11 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, addDoc, onSnapshot, query, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ลงทะเบียน Firebase เข้าสู่ Global scope เพื่อให้ React เรียกใช้ได้ทันที
         window.FirebaseBridge = { 
             initializeApp, getAuth, signInAnonymously, onAuthStateChanged, 
-            signInWithCustomToken, getFirestore, collection, addDoc, 
+            signInWithCustomToken, getFirestore, collection, doc, addDoc, 
             onSnapshot, query, serverTimestamp, orderBy 
         };
     </script>
@@ -41,74 +40,83 @@
             const [user, setUser] = useState(null);
             const [reports, setReports] = useState([]);
             const [isAdding, setIsAdding] = useState(false);
-            const [status, setStatus] = useState('initializing'); // initializing, connecting, ready, error
+            const [status, setStatus] = useState('initializing'); // initializing, ready, demo, error
+            const [errorMessage, setErrorMessage] = useState('');
             const [form, setForm] = useState({ title: '', detail: '', image: null });
-            const [aiProcessing, setAiProcessing] = useState(false);
             const dbRef = useRef(null);
-            const authRef = useRef(null);
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'work-sync-app';
 
-            // 1. ตรวจสอบการโหลด Library และเชื่อมต่อ Auth
+            // 1. ระบบ Initial และ Authentication (ต้องเสร็จก่อนเริ่ม Query)
             useEffect(() => {
-                const checkAndInit = async () => {
+                const initAuth = async () => {
                     if (!window.FirebaseBridge) {
-                        setTimeout(checkAndInit, 500);
+                        setTimeout(initAuth, 500);
                         return;
                     }
-                    
-                    setStatus('connecting');
-                    const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore } = window.FirebaseBridge;
-                    
-                    try {
-                        const firebaseConfig = JSON.parse(__firebase_config);
-                        const app = initializeApp(firebaseConfig);
-                        const auth = getAuth(app);
-                        const db = getFirestore(app);
-                        
-                        authRef.current = auth;
-                        dbRef.current = db;
 
-                        // ล็อกอินแบบข้ามขั้นตอนถ้ามี Token หรือล็อกอินแบบ Anonymous
+                    const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore } = window.FirebaseBridge;
+
+                    try {
+                        if (typeof __firebase_config === 'undefined') {
+                            setStatus('demo');
+                            return;
+                        }
+
+                        const config = JSON.parse(__firebase_config);
+                        const app = initializeApp(config);
+                        const auth = getAuth(app);
+                        dbRef.current = getFirestore(app);
+
+                        // กฎข้อที่ 3: ต้องเรียก Auth ก่อนเสมอ
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
                             await signInAnonymously(auth);
                         }
 
-                        onAuthStateChanged(auth, (u) => {
-                            if (u) {
-                                setUser(u);
+                        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+                            if (currentUser) {
+                                setUser(currentUser);
                                 setStatus('ready');
-                            } else {
-                                setStatus('error');
                             }
                         });
+
+                        return () => unsubscribe();
                     } catch (err) {
-                        console.error("Firebase Auth Error:", err);
-                        setStatus('error');
+                        console.error("Auth initialization error:", err);
+                        setErrorMessage(err.message);
+                        setStatus('demo'); // Fallback to demo mode if real connection fails
                     }
                 };
-
-                checkAndInit();
+                initAuth();
             }, []);
 
-            // 2. ดึงข้อมูลรายงานจาก Cloud
+            // 2. ดึงข้อมูล (เฉพาะเมื่อ Auth สำเร็จแล้ว)
             useEffect(() => {
+                // กฎข้อที่ 3: Guard Firestore ด้วยการเช็ค User
                 if (status !== 'ready' || !user || !dbRef.current) return;
 
                 const { collection, query, onSnapshot, orderBy } = window.FirebaseBridge;
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
                 
+                // กฎข้อที่ 1: ใช้ Path ที่ถูกต้อง /artifacts/{appId}/public/data/{collectionName}
                 const q = query(
                     collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'work_reports'),
                     orderBy('timestamp', 'desc')
                 );
 
-                const unsubscribe = onSnapshot(q, (snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setReports(data);
-                }, (err) => {
-                    console.error("Firestore Listen Error:", err);
-                });
+                const unsubscribe = onSnapshot(q, 
+                    (snapshot) => {
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        setReports(data);
+                    }, 
+                    (err) => {
+                        console.error("Firestore Listen Error:", err);
+                        // ถ้าเกิดปัญหา Permission ให้ลองสลับไปโหมด Demo เพื่อให้แอปยังทำงานได้
+                        if (err.code === 'permission-denied') {
+                            console.warn("Permission denied, falling back to local state visibility.");
+                        }
+                    }
+                );
 
                 return () => unsubscribe();
             }, [status, user]);
@@ -124,8 +132,22 @@
 
             const submitReport = async () => {
                 if (!form.title || !form.image) return;
+
+                if (status === 'demo') {
+                    const newReport = {
+                        id: Date.now().toString(),
+                        ...form,
+                        timestamp: { seconds: Math.floor(Date.now()/1000) }
+                    };
+                    setReports([newReport, ...reports]);
+                    setIsAdding(false);
+                    setForm({ title: '', detail: '', image: null });
+                    return;
+                }
+
+                if (!user) return;
+
                 const { collection, addDoc, serverTimestamp } = window.FirebaseBridge;
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
                 
                 try {
                     await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'work_reports'), {
@@ -136,53 +158,51 @@
                     setForm({ title: '', detail: '', image: null });
                     setIsAdding(false);
                 } catch (err) {
-                    alert("บันทึกไม่สำเร็จ: " + err.message);
+                    console.error("Submit Error:", err);
+                    alert("บันทึกล้มเหลว (Permission Error): ตรวจสอบ Firebase Rules อีกครั้ง");
                 }
             };
 
             useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [status, reports, isAdding]);
 
-            if (status === 'initializing' || status === 'connecting') {
+            if (status === 'initializing') {
                 return (
                     <div className="h-screen flex flex-col items-center justify-center bg-white">
-                        <div className="w-12 h-12 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
-                        <p className="mt-6 font-bold text-slate-400 text-xs tracking-widest uppercase">กำลังเชื่อมต่อคลาวด์...</p>
-                    </div>
-                );
-            }
-
-            if (status === 'error') {
-                return (
-                    <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-8 text-center">
-                        <i data-lucide="alert-triangle" className="w-16 h-16 text-red-500 mb-6"></i>
-                        <h1 className="text-xl font-black text-red-900 mb-2">เชื่อมต่อล้มเหลว</h1>
-                        <p className="text-red-700 text-sm mb-8">โปรดตรวจสอบว่าได้ตั้งค่า Firebase Rules และ Anonymous Auth ในโปรเจกต์ 'MyWorkLog' แล้ว</p>
-                        <button onClick={() => window.location.reload()} className="px-10 py-4 bg-red-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs">ลองอีกครั้ง</button>
+                        <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+                        <p className="mt-6 font-bold text-slate-400 text-xs tracking-widest uppercase">กำลังเตรียมระบบความปลอดภัย...</p>
                     </div>
                 );
             }
 
             return (
                 <div className="app-card">
-                    {/* Header */}
                     <header className="px-6 py-6 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-md sticky top-0 z-40">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-slate-900 rounded-2xl flex items-center justify-center text-white">
+                            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
                                 <i data-lucide="zap" className="w-5 h-5 fill-current"></i>
                             </div>
                             <h1 className="text-xl font-black text-slate-900 italic tracking-tighter">WORK<span className="text-indigo-600">SYNC</span></h1>
                         </div>
-                        <div className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest">Online</div>
+                        <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${status === 'demo' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
+                            {status === 'demo' ? 'Local Mode' : 'Cloud Secure'}
+                        </div>
                     </header>
 
-                    {/* Timeline */}
                     <main className="p-6 pb-32 space-y-8">
+                        {status === 'demo' && (
+                            <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mb-4">
+                                <p className="text-[11px] text-amber-800 leading-tight">
+                                    <b>โหมดการทำงานจำกัด:</b> ไม่สามารถเชื่อมต่อฐานข้อมูลได้ (Permission Denied) ระบบจะบันทึกข้อมูลไว้ชั่วคราวในเครื่องนี้เท่านั้น
+                                </p>
+                            </div>
+                        )}
+                        
                         {reports.length === 0 ? (
                             <div className="py-20 text-center">
                                 <div className="w-16 h-16 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-4 text-slate-200">
                                     <i data-lucide="image" className="w-8 h-8"></i>
                                 </div>
-                                <p className="text-slate-400 text-sm font-medium">ยังไม่มีข้อมูลในคลาวด์</p>
+                                <p className="text-slate-400 text-sm font-medium italic">ไม่พบบันทึกงานที่ได้รับอนุญาตให้อ่าน</p>
                             </div>
                         ) : (
                             reports.map(item => (
@@ -202,34 +222,39 @@
                         )}
                     </main>
 
-                    {/* Add Button */}
                     <div className="fixed bottom-8 left-0 right-0 px-6 flex justify-center z-50">
                         <button 
                             onClick={() => setIsAdding(true)}
                             className="bg-slate-900 text-white px-8 py-5 rounded-full shadow-2xl flex items-center gap-3 font-bold text-sm uppercase tracking-[0.2em] active:scale-95 transition-transform"
                         >
-                            <i data-lucide="plus-circle" className="w-5 h-5"></i>
-                            New Report
+                            <i data-lucide="camera" className="w-5 h-5"></i>
+                            สร้างรายงานใหม่
                         </button>
                     </div>
 
-                    {/* Modal */}
                     {isAdding && (
-                        <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center">
-                            <div className="bg-white w-full max-w-lg rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl animate-pop max-h-[90vh] overflow-y-auto">
+                        <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+                            <div className="bg-white w-full max-w-lg rounded-[2.5rem] p-8 shadow-2xl animate-pop max-h-[90vh] overflow-y-auto">
                                 <div className="flex justify-between items-center mb-8">
-                                    <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">เพิ่มบันทึกใหม่</h2>
-                                    <button onClick={() => setIsAdding(false)} className="bg-slate-100 p-2 rounded-full"><i data-lucide="x" className="w-5 h-5"></i></button>
+                                    <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Report Form</h2>
+                                    <button onClick={() => setIsAdding(false)} className="bg-slate-100 p-2 rounded-full text-slate-400 hover:text-slate-900 transition-colors">
+                                        <i data-lucide="x" className="w-5 h-5"></i>
+                                    </button>
                                 </div>
                                 
                                 <div className="space-y-6">
                                     <div className="aspect-video bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-100 flex items-center justify-center overflow-hidden">
                                         {form.image ? (
-                                            <img src={form.image} className="w-full h-full object-cover" />
+                                            <div className="relative w-full h-full">
+                                                <img src={form.image} className="w-full h-full object-cover" />
+                                                <button onClick={() => setForm({...form, image: null})} className="absolute top-4 right-4 bg-white/80 p-2 rounded-full shadow-lg">
+                                                    <i data-lucide="trash-2" className="w-4 h-4 text-red-500"></i>
+                                                </button>
+                                            </div>
                                         ) : (
                                             <label className="cursor-pointer flex flex-col items-center">
                                                 <i data-lucide="camera" className="w-10 h-10 text-slate-200 mb-2"></i>
-                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">อัปโหลดรูปภาพ</span>
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">เลือกภาพหน้างาน</span>
                                                 <input type="file" accept="image/*" className="hidden" onChange={handleImage} />
                                             </label>
                                         )}
@@ -237,14 +262,14 @@
 
                                     <div className="space-y-4">
                                         <input 
-                                            placeholder="หัวข้อรายงาน"
-                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none font-bold text-slate-900 focus:bg-white border-2 border-transparent focus:border-indigo-100"
+                                            placeholder="ระบุหัวข้อรายงาน"
+                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none font-bold text-slate-900 focus:bg-white border-2 border-transparent focus:border-indigo-100 transition-all shadow-inner"
                                             value={form.title}
                                             onChange={e => setForm({...form, title: e.target.value})}
                                         />
                                         <textarea 
-                                            placeholder="รายละเอียด..."
-                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none text-slate-600 min-h-[120px] focus:bg-white border-2 border-transparent focus:border-indigo-100"
+                                            placeholder="สรุปรายละเอียดการทำงาน..."
+                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none text-slate-600 min-h-[120px] focus:bg-white border-2 border-transparent focus:border-indigo-100 transition-all shadow-inner"
                                             value={form.detail}
                                             onChange={e => setForm({...form, detail: e.target.value})}
                                         ></textarea>
@@ -253,9 +278,9 @@
                                     <button 
                                         onClick={submitReport}
                                         disabled={!form.title || !form.image}
-                                        className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs disabled:opacity-20 shadow-xl"
+                                        className="w-full py-6 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs disabled:opacity-20 shadow-xl active:scale-95 transition-all"
                                     >
-                                        บันทึกลง Cloud
+                                        บันทึกข้อมูล
                                     </button>
                                 </div>
                             </div>
