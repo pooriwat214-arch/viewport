@@ -21,6 +21,7 @@
         .btn-primary { background: #4f46e5; transition: all 0.3s ease; }
         .btn-primary:hover { background: #4338ca; transform: translateY(-1px); }
         .btn-primary:active { transform: translateY(0); }
+        video { transform: scaleX(-1); } /* Mirror for front camera, optional */
     </style>
 </head>
 <body>
@@ -46,8 +47,12 @@
             const [reports, setReports] = useState([]);
             const [isAdding, setIsAdding] = useState(false);
             const [isSaving, setIsSaving] = useState(false);
+            const [isCameraActive, setIsCameraActive] = useState(false);
             const [status, setStatus] = useState('initializing');
             const [form, setForm] = useState({ title: '', detail: '', image: null });
+            
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
             const dbRef = useRef(null);
             
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'myworklog-fd954-app';
@@ -76,16 +81,13 @@
                         const auth = getAuth(app);
                         dbRef.current = getFirestore(app);
 
-                        // ฟังก์ชันสำหรับจัดการ Sign In แบบปลอดภัย
                         const performSignIn = async () => {
                             try {
-                                // ตรวจสอบ Custom Token ก่อน
                                 if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                                     try {
                                         await signInWithCustomToken(auth, __initial_auth_token);
                                         return;
                                     } catch (tokenErr) {
-                                        // หาก Token มีปัญหา (เช่น Mismatch) ให้ถอยไปใช้ Anonymous
                                         console.warn("Custom Token failed, falling back to Anonymous:", tokenErr.message);
                                     }
                                 }
@@ -131,7 +133,46 @@
                 return () => unsubscribe();
             }, [status, user]);
 
-            const handleImage = (e) => {
+            // Camera Functions
+            const startCamera = async () => {
+                setIsCameraActive(true);
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: "environment" }, // ใช้กล้องหลังมือถือ
+                        audio: false 
+                    });
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                    }
+                } catch (err) {
+                    alert("ไม่สามารถเข้าถึงกล้องได้: " + err.message);
+                    setIsCameraActive(false);
+                }
+            };
+
+            const stopCamera = () => {
+                if (videoRef.current && videoRef.current.srcObject) {
+                    const tracks = videoRef.current.srcObject.getTracks();
+                    tracks.forEach(track => track.stop());
+                }
+                setIsCameraActive(false);
+            };
+
+            const capturePhoto = () => {
+                const video = videoRef.current;
+                const canvas = canvasRef.current;
+                if (video && canvas) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const imageData = canvas.toDataURL('image/jpeg');
+                    setForm({ ...form, image: imageData });
+                    stopCamera();
+                }
+            };
+
+            const handleImageFile = (e) => {
                 const file = e.target.files[0];
                 if (file) {
                     const reader = new FileReader();
@@ -161,23 +202,13 @@
                 }
             };
 
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [status, reports, isAdding, isSaving]);
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [status, reports, isAdding, isSaving, isCameraActive, form.image]);
 
             if (status === 'initializing') {
                 return (
                     <div className="h-screen flex flex-col items-center justify-center bg-white">
                         <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
                         <p className="mt-4 font-bold text-slate-400 text-xs tracking-widest uppercase animate-pulse">กำลังตั้งค่าระบบ Cloud...</p>
-                    </div>
-                );
-            }
-
-            if (status === 'error') {
-                return (
-                    <div className="h-screen flex flex-col items-center justify-center bg-slate-50 p-10 text-center">
-                        <i data-lucide="alert-circle" className="w-12 h-12 text-red-500 mb-4"></i>
-                        <h2 className="text-lg font-bold text-slate-800 uppercase">Cloud Error</h2>
-                        <p className="text-slate-500 text-sm mt-2">โปรดเปิดใช้งาน Anonymous Auth ใน Firebase Console</p>
                     </div>
                 );
             }
@@ -203,10 +234,10 @@
                         {reports.length === 0 ? (
                             <div className="py-24 text-center">
                                 <div className="w-20 h-20 bg-slate-50 rounded-[2rem] flex items-center justify-center mx-auto mb-6 text-slate-200 border border-slate-50">
-                                    <i data-lucide="plus-square" className="w-8 h-8"></i>
+                                    <i data-lucide="camera" className="w-8 h-8"></i>
                                 </div>
                                 <h3 className="text-slate-800 font-bold">ยังไม่พบบันทึก</h3>
-                                <p className="text-slate-400 text-xs mt-2">กดปุ่มด้านล่างเพื่อเริ่มบันทึกงานครั้งแรก</p>
+                                <p className="text-slate-400 text-xs mt-2">กดปุ่มเพื่อเริ่มถ่ายภาพบันทึกงาน</p>
                             </div>
                         ) : (
                             reports.map(report => (
@@ -237,36 +268,59 @@
                             onClick={() => setIsAdding(true)}
                             className="pointer-events-auto btn-primary text-white px-10 py-5 rounded-full shadow-2xl flex items-center gap-4 font-black text-xs uppercase tracking-[0.2em]"
                         >
-                            <i data-lucide="plus" className="w-5 h-5"></i>
-                            Add WorkLog
+                            <i data-lucide="camera" className="w-5 h-5"></i>
+                            Capture Work
                         </button>
                     </div>
 
                     {isAdding && (
                         <div className="fixed inset-0 z-[60] bg-slate-900/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
                             <div className="bg-white w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] p-8 shadow-2xl animate-pop max-h-[92vh] overflow-y-auto hide-scrollbar">
-                                <div className="flex justify-between items-center mb-8">
+                                <div className="flex justify-between items-center mb-6">
                                     <h2 className="text-2xl font-black text-slate-900 tracking-tighter uppercase">บันทึกข้อมูล</h2>
-                                    <button onClick={() => setIsAdding(false)} className="bg-slate-50 p-2.5 rounded-full text-slate-400">
+                                    <button onClick={() => { setIsAdding(false); stopCamera(); }} className="bg-slate-50 p-2.5 rounded-full text-slate-400">
                                         <i data-lucide="x" className="w-6 h-6"></i>
                                     </button>
                                 </div>
 
                                 <div className="space-y-6">
-                                    <div className="aspect-video bg-slate-50 rounded-[2rem] border-2 border-dashed border-slate-200 flex items-center justify-center relative overflow-hidden group">
-                                        {form.image ? (
-                                            <div className="relative w-full h-full">
-                                                <img src={form.image} className="w-full h-full object-cover" />
-                                                <button onClick={() => setForm({...form, image: null})} className="absolute top-4 right-4 bg-white p-2 rounded-full shadow-lg">
-                                                    <i data-lucide="trash-2" className="w-4 h-4 text-red-500"></i>
+                                    <div className="aspect-video bg-slate-950 rounded-[2rem] border-2 border-slate-200 flex items-center justify-center relative overflow-hidden group">
+                                        {isCameraActive ? (
+                                            <div className="relative w-full h-full flex flex-col items-center justify-center">
+                                                <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover rounded-[2rem]" />
+                                                <button 
+                                                    onClick={capturePhoto}
+                                                    className="absolute bottom-4 bg-white w-14 h-14 rounded-full flex items-center justify-center shadow-xl active:scale-90 transition-transform"
+                                                >
+                                                    <div className="w-10 h-10 border-4 border-slate-900 rounded-full"></div>
                                                 </button>
                                             </div>
+                                        ) : form.image ? (
+                                            <div className="relative w-full h-full">
+                                                <img src={form.image} className="w-full h-full object-cover" />
+                                                <div className="absolute top-4 right-4 flex gap-2">
+                                                    <button onClick={startCamera} className="bg-white/90 backdrop-blur p-2 rounded-full shadow-lg">
+                                                        <i data-lucide="refresh-cw" className="w-4 h-4 text-indigo-600"></i>
+                                                    </button>
+                                                    <button onClick={() => setForm({...form, image: null})} className="bg-white/90 backdrop-blur p-2 rounded-full shadow-lg">
+                                                        <i data-lucide="trash-2" className="w-4 h-4 text-red-500"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
                                         ) : (
-                                            <label className="cursor-pointer flex flex-col items-center">
-                                                <i data-lucide="camera" className="w-10 h-10 text-slate-200 mb-2"></i>
-                                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">เลือกรูปภาพ</span>
-                                                <input type="file" accept="image/*" className="hidden" onChange={handleImage} />
-                                            </label>
+                                            <div className="flex flex-col gap-4 items-center">
+                                                <button 
+                                                    onClick={startCamera}
+                                                    className="flex flex-col items-center gap-2 p-6 rounded-3xl bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+                                                >
+                                                    <i data-lucide="camera" className="w-8 h-8"></i>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest">เปิดกล้องถ่ายรูป</span>
+                                                </button>
+                                                <label className="cursor-pointer flex flex-col items-center gap-1 text-slate-400">
+                                                    <span className="text-[10px] font-bold uppercase tracking-widest">หรือ เลือกจากอัลบั้ม</span>
+                                                    <input type="file" accept="image/*" className="hidden" onChange={handleImageFile} />
+                                                </label>
+                                            </div>
                                         )}
                                     </div>
 
@@ -279,7 +333,7 @@
                                         />
                                         <textarea 
                                             placeholder="สรุปรายละเอียด..."
-                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none text-slate-600 min-h-[120px] border-2 border-transparent focus:border-indigo-100 transition-all"
+                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none text-slate-600 min-h-[100px] border-2 border-transparent focus:border-indigo-100 transition-all"
                                             value={form.detail}
                                             onChange={e => setForm({...form, detail: e.target.value})}
                                         ></textarea>
@@ -287,15 +341,16 @@
 
                                     <button 
                                         onClick={saveReport}
-                                        disabled={!form.title || !form.image || isSaving}
+                                        disabled={!form.title || !form.image || isSaving || isCameraActive}
                                         className="w-full py-6 bg-indigo-600 text-white rounded-[1.5rem] font-black uppercase tracking-widest text-xs shadow-xl disabled:opacity-30 active:scale-95 transition-all flex items-center justify-center gap-3"
                                     >
-                                        {isSaving ? 'กำลังอัปโหลด...' : 'บันทึกงาน'}
+                                        {isSaving ? 'กำลังบันทึก...' : 'บันทึกงาน'}
                                     </button>
                                 </div>
                             </div>
                         </div>
                     )}
+                    <canvas ref={canvasRef} className="hidden"></canvas>
                 </div>
             );
         };
