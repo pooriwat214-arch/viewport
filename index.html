@@ -1,297 +1,426 @@
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WorkSync AI - Smart Reporting</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700;800&display=swap');
-        body { font-family: 'Sarabun', sans-serif; background-color: #f8fafc; }
-        .app-card { max-width: 500px; margin: 0 auto; min-height: 100vh; background: white; position: relative; }
-        .animate-pop { animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-        @keyframes pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
-    </style>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>WorkSync AI</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+body{font-family:system-ui;background:#f1f5f9}
+.app{max-width:520px;margin:auto;background:white;min-height:100vh}
+</style>
 </head>
+
 <body>
-    <div id="root"></div>
 
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, addDoc, onSnapshot, query, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+<div id="root"></div>
 
-        window.FirebaseBridge = { 
-            initializeApp, getAuth, signInAnonymously, onAuthStateChanged, 
-            signInWithCustomToken, getFirestore, collection, doc, addDoc, 
-            onSnapshot, query, serverTimestamp, orderBy 
-        };
-    </script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+import { getFirestore, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
-    <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+window.FB={
+initializeApp,getAuth,signInAnonymously,
+getFirestore,collection,addDoc,serverTimestamp,
+onSnapshot,query,orderBy,
+getStorage,ref,uploadBytes,getDownloadURL
+}
+</script>
 
-        const App = () => {
-            const [user, setUser] = useState(null);
-            const [reports, setReports] = useState([]);
-            const [isAdding, setIsAdding] = useState(false);
-            const [status, setStatus] = useState('initializing'); // initializing, ready, demo, error
-            const [errorMessage, setErrorMessage] = useState('');
-            const [form, setForm] = useState({ title: '', detail: '', image: null });
-            const dbRef = useRef(null);
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'work-sync-app';
+<script type="text/babel">
 
-            // 1. ระบบ Initial และ Authentication (ต้องเสร็จก่อนเริ่ม Query)
-            useEffect(() => {
-                const initAuth = async () => {
-                    if (!window.FirebaseBridge) {
-                        setTimeout(initAuth, 500);
-                        return;
-                    }
+const {useState,useEffect,useRef}=React
 
-                    const { initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, getFirestore } = window.FirebaseBridge;
+/* ---------------- Dashboard ---------------- */
 
-                    try {
-                        if (typeof __firebase_config === 'undefined') {
-                            setStatus('demo');
-                            return;
-                        }
+function Dashboard({reports}){
 
-                        const config = JSON.parse(__firebase_config);
-                        const app = initializeApp(config);
-                        const auth = getAuth(app);
-                        dbRef.current = getFirestore(app);
+const today=new Date()
 
-                        // กฎข้อที่ 3: ต้องเรียก Auth ก่อนเสมอ
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
+const todayReports=reports.filter(r=>{
+ if(!r.timestamp?.seconds) return false
+ const d=new Date(r.timestamp.seconds*1000)
+ return d.toDateString()===today.toDateString()
+})
 
-                        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-                            if (currentUser) {
-                                setUser(currentUser);
-                                setStatus('ready');
-                            }
-                        });
+const totalToday=todayReports.length
 
-                        return () => unsubscribe();
-                    } catch (err) {
-                        console.error("Auth initialization error:", err);
-                        setErrorMessage(err.message);
-                        setStatus('demo'); // Fallback to demo mode if real connection fails
-                    }
-                };
-                initAuth();
-            }, []);
+const byHour={}
 
-            // 2. ดึงข้อมูล (เฉพาะเมื่อ Auth สำเร็จแล้ว)
-            useEffect(() => {
-                // กฎข้อที่ 3: Guard Firestore ด้วยการเช็ค User
-                if (status !== 'ready' || !user || !dbRef.current) return;
+todayReports.forEach(r=>{
+ const d=new Date(r.timestamp.seconds*1000)
+ const h=d.getHours()
+ byHour[h]=(byHour[h]||0)+1
+})
 
-                const { collection, query, onSnapshot, orderBy } = window.FirebaseBridge;
-                
-                // กฎข้อที่ 1: ใช้ Path ที่ถูกต้อง /artifacts/{appId}/public/data/{collectionName}
-                const q = query(
-                    collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'work_reports'),
-                    orderBy('timestamp', 'desc')
-                );
+const hours=Object.keys(byHour).sort((a,b)=>a-b)
 
-                const unsubscribe = onSnapshot(q, 
-                    (snapshot) => {
-                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setReports(data);
-                    }, 
-                    (err) => {
-                        console.error("Firestore Listen Error:", err);
-                        // ถ้าเกิดปัญหา Permission ให้ลองสลับไปโหมด Demo เพื่อให้แอปยังทำงานได้
-                        if (err.code === 'permission-denied') {
-                            console.warn("Permission denied, falling back to local state visibility.");
-                        }
-                    }
-                );
+return(
 
-                return () => unsubscribe();
-            }, [status, user]);
+<div className="space-y-4">
 
-            const handleImage = (e) => {
-                const file = e.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onloadend = () => setForm({...form, image: reader.result});
-                    reader.readAsDataURL(file);
-                }
-            };
+<div className="grid grid-cols-2 gap-3">
 
-            const submitReport = async () => {
-                if (!form.title || !form.image) return;
+<div className="bg-indigo-50 p-4 rounded-xl">
+<div className="text-xs text-indigo-500">รายงานวันนี้</div>
+<div className="text-2xl font-bold">{totalToday}</div>
+</div>
 
-                if (status === 'demo') {
-                    const newReport = {
-                        id: Date.now().toString(),
-                        ...form,
-                        timestamp: { seconds: Math.floor(Date.now()/1000) }
-                    };
-                    setReports([newReport, ...reports]);
-                    setIsAdding(false);
-                    setForm({ title: '', detail: '', image: null });
-                    return;
-                }
+<div className="bg-green-50 p-4 rounded-xl">
+<div className="text-xs text-green-500">ช่วงเวลาที่มีงาน</div>
+<div className="text-2xl font-bold">{hours.length}</div>
+</div>
 
-                if (!user) return;
+</div>
 
-                const { collection, addDoc, serverTimestamp } = window.FirebaseBridge;
-                
-                try {
-                    await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'work_reports'), {
-                        ...form,
-                        userId: user.uid,
-                        timestamp: serverTimestamp()
-                    });
-                    setForm({ title: '', detail: '', image: null });
-                    setIsAdding(false);
-                } catch (err) {
-                    console.error("Submit Error:", err);
-                    alert("บันทึกล้มเหลว (Permission Error): ตรวจสอบ Firebase Rules อีกครั้ง");
-                }
-            };
+<div className="bg-white border rounded-xl p-3">
 
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [status, reports, isAdding]);
+<div className="font-semibold mb-2">
+รายงานตามชั่วโมง
+</div>
 
-            if (status === 'initializing') {
-                return (
-                    <div className="h-screen flex flex-col items-center justify-center bg-white">
-                        <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                        <p className="mt-6 font-bold text-slate-400 text-xs tracking-widest uppercase">กำลังเตรียมระบบความปลอดภัย...</p>
-                    </div>
-                );
-            }
+{hours.length===0 &&
+<div className="text-sm text-gray-400">
+ยังไม่มีรายงานวันนี้
+</div>
+}
 
-            return (
-                <div className="app-card">
-                    <header className="px-6 py-6 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-md sticky top-0 z-40">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
-                                <i data-lucide="zap" className="w-5 h-5 fill-current"></i>
-                            </div>
-                            <h1 className="text-xl font-black text-slate-900 italic tracking-tighter">WORK<span className="text-indigo-600">SYNC</span></h1>
-                        </div>
-                        <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest ${status === 'demo' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
-                            {status === 'demo' ? 'Local Mode' : 'Cloud Secure'}
-                        </div>
-                    </header>
+{hours.map(h=>(
+<div key={h} className="flex justify-between border-b py-1 text-sm">
+<span>{h}:00</span>
+<span>{byHour[h]} งาน</span>
+</div>
+))}
 
-                    <main className="p-6 pb-32 space-y-8">
-                        {status === 'demo' && (
-                            <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl mb-4">
-                                <p className="text-[11px] text-amber-800 leading-tight">
-                                    <b>โหมดการทำงานจำกัด:</b> ไม่สามารถเชื่อมต่อฐานข้อมูลได้ (Permission Denied) ระบบจะบันทึกข้อมูลไว้ชั่วคราวในเครื่องนี้เท่านั้น
-                                </p>
-                            </div>
-                        )}
-                        
-                        {reports.length === 0 ? (
-                            <div className="py-20 text-center">
-                                <div className="w-16 h-16 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-4 text-slate-200">
-                                    <i data-lucide="image" className="w-8 h-8"></i>
-                                </div>
-                                <p className="text-slate-400 text-sm font-medium italic">ไม่พบบันทึกงานที่ได้รับอนุญาตให้อ่าน</p>
-                            </div>
-                        ) : (
-                            reports.map(item => (
-                                <div key={item.id} className="animate-pop bg-white border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm hover:shadow-xl transition-all duration-500">
-                                    <img src={item.image} className="w-full h-56 object-cover" />
-                                    <div className="p-6">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <h3 className="font-bold text-slate-900">{item.title}</h3>
-                                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
-                                                {item.timestamp ? new Date(item.timestamp.seconds * 1000).toLocaleTimeString('th-TH') : '...'}
-                                            </span>
-                                        </div>
-                                        <p className="text-sm text-slate-500 leading-relaxed">{item.detail}</p>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </main>
+</div>
 
-                    <div className="fixed bottom-8 left-0 right-0 px-6 flex justify-center z-50">
-                        <button 
-                            onClick={() => setIsAdding(true)}
-                            className="bg-slate-900 text-white px-8 py-5 rounded-full shadow-2xl flex items-center gap-3 font-bold text-sm uppercase tracking-[0.2em] active:scale-95 transition-transform"
-                        >
-                            <i data-lucide="camera" className="w-5 h-5"></i>
-                            สร้างรายงานใหม่
-                        </button>
-                    </div>
+</div>
 
-                    {isAdding && (
-                        <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-lg rounded-[2.5rem] p-8 shadow-2xl animate-pop max-h-[90vh] overflow-y-auto">
-                                <div className="flex justify-between items-center mb-8">
-                                    <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">Report Form</h2>
-                                    <button onClick={() => setIsAdding(false)} className="bg-slate-100 p-2 rounded-full text-slate-400 hover:text-slate-900 transition-colors">
-                                        <i data-lucide="x" className="w-5 h-5"></i>
-                                    </button>
-                                </div>
-                                
-                                <div className="space-y-6">
-                                    <div className="aspect-video bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-100 flex items-center justify-center overflow-hidden">
-                                        {form.image ? (
-                                            <div className="relative w-full h-full">
-                                                <img src={form.image} className="w-full h-full object-cover" />
-                                                <button onClick={() => setForm({...form, image: null})} className="absolute top-4 right-4 bg-white/80 p-2 rounded-full shadow-lg">
-                                                    <i data-lucide="trash-2" className="w-4 h-4 text-red-500"></i>
-                                                </button>
-                                            </div>
-                                        ) : (
-                                            <label className="cursor-pointer flex flex-col items-center">
-                                                <i data-lucide="camera" className="w-10 h-10 text-slate-200 mb-2"></i>
-                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">เลือกภาพหน้างาน</span>
-                                                <input type="file" accept="image/*" className="hidden" onChange={handleImage} />
-                                            </label>
-                                        )}
-                                    </div>
+)
 
-                                    <div className="space-y-4">
-                                        <input 
-                                            placeholder="ระบุหัวข้อรายงาน"
-                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none font-bold text-slate-900 focus:bg-white border-2 border-transparent focus:border-indigo-100 transition-all shadow-inner"
-                                            value={form.title}
-                                            onChange={e => setForm({...form, title: e.target.value})}
-                                        />
-                                        <textarea 
-                                            placeholder="สรุปรายละเอียดการทำงาน..."
-                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none text-slate-600 min-h-[120px] focus:bg-white border-2 border-transparent focus:border-indigo-100 transition-all shadow-inner"
-                                            value={form.detail}
-                                            onChange={e => setForm({...form, detail: e.target.value})}
-                                        ></textarea>
-                                    </div>
+}
 
-                                    <button 
-                                        onClick={submitReport}
-                                        disabled={!form.title || !form.image}
-                                        className="w-full py-6 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs disabled:opacity-20 shadow-xl active:scale-95 transition-all"
-                                    >
-                                        บันทึกข้อมูล
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
+/* ---------------- Camera ---------------- */
 
-        const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
-    </script>
+function Camera({onCapture,onClose}){
+
+const videoRef=useRef(null)
+const canvasRef=useRef(null)
+const streamRef=useRef(null)
+
+useEffect(()=>{
+
+async function start(){
+
+try{
+
+const stream=await navigator.mediaDevices.getUserMedia({
+ video:{facingMode:"environment"}
+})
+
+streamRef.current=stream
+videoRef.current.srcObject=stream
+
+}catch(e){
+
+alert("ไม่สามารถเปิดกล้องได้")
+
+}
+
+}
+
+start()
+
+return ()=>{
+
+if(streamRef.current){
+streamRef.current.getTracks().forEach(t=>t.stop())
+}
+
+}
+
+},[])
+
+function shoot(){
+
+const video=videoRef.current
+const canvas=canvasRef.current
+
+canvas.width=video.videoWidth
+canvas.height=video.videoHeight
+
+const ctx=canvas.getContext("2d")
+
+ctx.drawImage(video,0,0)
+
+const time=new Date().toLocaleString("th-TH")
+
+ctx.fillStyle="white"
+ctx.font="28px sans-serif"
+ctx.fillText(time,20,canvas.height-30)
+
+/* compress image */
+
+canvas.toBlob(blob=>{
+onCapture(blob)
+},"image/jpeg",0.7)
+
+}
+
+return(
+
+<div className="fixed inset-0 bg-black z-50 flex flex-col">
+
+<video
+ref={videoRef}
+autoPlay
+playsInline
+className="flex-1 object-cover"
+/>
+
+<div className="p-6 flex justify-center gap-6">
+
+<button
+onClick={shoot}
+className="w-16 h-16 bg-white rounded-full"
+/>
+
+<button
+onClick={onClose}
+className="text-white"
+>
+ปิด
+</button>
+
+</div>
+
+<canvas ref={canvasRef} className="hidden"/>
+
+</div>
+
+)
+
+}
+
+/* ---------------- App ---------------- */
+
+function App(){
+
+const [reports,setReports]=useState([])
+const [title,setTitle]=useState("")
+const [detail,setDetail]=useState("")
+const [camera,setCamera]=useState(false)
+
+const [imageBlob,setImageBlob]=useState(null)
+const [preview,setPreview]=useState(null)
+
+const [loading,setLoading]=useState(false)
+
+const db=useRef(null)
+const storage=useRef(null)
+
+/* firebase init */
+
+useEffect(()=>{
+
+async function init(){
+
+if(typeof __firebase_config==='undefined') return
+
+const config=JSON.parse(__firebase_config)
+
+const app=FB.initializeApp(config)
+
+const auth=FB.getAuth(app)
+await FB.signInAnonymously(auth)
+
+storage.current=FB.getStorage(app)
+
+db.current=FB.getFirestore(app)
+
+const q=FB.query(
+FB.collection(db.current,'reports'),
+FB.orderBy('timestamp','desc')
+)
+
+FB.onSnapshot(q,snap=>{
+
+const data=snap.docs.map(d=>({
+id:d.id,
+...d.data()
+}))
+
+setReports(data)
+
+})
+
+}
+
+init()
+
+},[])
+
+/* capture image */
+
+function handleCapture(blob){
+
+setCamera(false)
+
+setImageBlob(blob)
+
+setPreview(URL.createObjectURL(blob))
+
+}
+
+/* submit report */
+
+async function submit(){
+
+if(!title||!imageBlob) return
+
+if(loading) return
+
+setLoading(true)
+
+try{
+
+const imgRef=FB.ref(storage.current,'reports/'+Date.now()+'.jpg')
+
+await FB.uploadBytes(imgRef,imageBlob)
+
+const url=await FB.getDownloadURL(imgRef)
+
+await FB.addDoc(
+FB.collection(db.current,'reports'),
+{
+title,
+detail,
+image:url,
+timestamp:FB.serverTimestamp()
+}
+)
+
+setTitle("")
+setDetail("")
+setPreview(null)
+setImageBlob(null)
+
+}catch(e){
+
+alert("บันทึกไม่สำเร็จ")
+
+}
+
+setLoading(false)
+
+}
+
+/* UI */
+
+return(
+
+<div className="app p-6 space-y-6">
+
+<h1 className="text-2xl font-black">
+WorkSync AI
+</h1>
+
+<Dashboard reports={reports}/>
+
+<div className="bg-slate-50 p-4 rounded-2xl space-y-3">
+
+<input
+className="w-full p-3 rounded-xl"
+placeholder="หัวข้อรายงาน"
+value={title}
+onChange={e=>setTitle(e.target.value)}
+/>
+
+<textarea
+className="w-full p-3 rounded-xl"
+placeholder="รายละเอียด"
+value={detail}
+onChange={e=>setDetail(e.target.value)}
+/>
+
+<button
+onClick={()=>setCamera(true)}
+className="w-full bg-gray-900 text-white p-3 rounded-xl"
+>
+เปิดกล้อง
+</button>
+
+{preview &&
+<img src={preview} className="rounded-xl"/>
+}
+
+<button
+onClick={submit}
+className="w-full bg-indigo-600 text-white p-3 rounded-xl"
+>
+{loading ? "กำลังบันทึก..." : "บันทึกรายงาน"}
+</button>
+
+</div>
+
+<div className="space-y-4">
+
+{reports.map(r=>(
+
+<div key={r.id} className="border rounded-2xl overflow-hidden">
+
+<img src={r.image}/>
+
+<div className="p-3">
+
+<div className="font-bold">
+{r.title}
+</div>
+
+<div className="text-sm text-gray-500">
+{r.detail}
+</div>
+
+<div className="text-xs text-gray-400">
+
+{r.timestamp?.seconds
+? new Date(r.timestamp.seconds*1000).toLocaleString("th-TH")
+: ""}
+
+</div>
+
+</div>
+
+</div>
+
+))}
+
+</div>
+
+{camera &&
+<Camera
+onCapture={handleCapture}
+onClose={()=>setCamera(false)}
+/>
+}
+
+</div>
+
+)
+
+}
+
+const root=ReactDOM.createRoot(document.getElementById("root"))
+root.render(<App/>)
+
+</script>
+
 </body>
 </html>
