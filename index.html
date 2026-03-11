@@ -4,31 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>WorkSync AI - Smart Reporting</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React & Libraries -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700;800&display=swap');
-        body { 
-            font-family: 'Sarabun', sans-serif; 
-            background-color: #f8fafc;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .app-card {
-            max-width: 500px;
-            margin: 0 auto;
-            min-height: 100vh;
-            background: white;
-            box-shadow: 0 0 40px rgba(0,0,0,0.03);
-            display: flex;
-            flex-direction: column;
-        }
+        body { font-family: 'Sarabun', sans-serif; background-color: #f8fafc; }
+        .app-card { max-width: 500px; margin: 0 auto; min-height: 100vh; background: white; position: relative; }
         .animate-pop { animation: pop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
         @keyframes pop { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
     </style>
@@ -41,8 +26,12 @@
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // เก็บฟังก์ชันไว้ใน Global เพื่อให้ React เรียกใช้
-        window.FirebaseCore = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, collection, addDoc, onSnapshot, query, serverTimestamp, orderBy };
+        // ลงทะเบียน Firebase เข้าสู่ Global scope เพื่อให้ React เรียกใช้ได้ทันที
+        window.FirebaseBridge = { 
+            initializeApp, getAuth, signInAnonymously, onAuthStateChanged, 
+            signInWithCustomToken, getFirestore, collection, addDoc, 
+            onSnapshot, query, serverTimestamp, orderBy 
+        };
     </script>
 
     <script type="text/babel">
@@ -52,32 +41,33 @@
             const [user, setUser] = useState(null);
             const [reports, setReports] = useState([]);
             const [isAdding, setIsAdding] = useState(false);
-            const [status, setStatus] = useState('connecting'); // connecting, ready, error
+            const [status, setStatus] = useState('initializing'); // initializing, connecting, ready, error
             const [form, setForm] = useState({ title: '', detail: '', image: null });
             const [aiProcessing, setAiProcessing] = useState(false);
-            const firebaseRef = useRef(null);
+            const dbRef = useRef(null);
+            const authRef = useRef(null);
 
-            // 1. Initialize Firebase & Auth
+            // 1. ตรวจสอบการโหลด Library และเชื่อมต่อ Auth
             useEffect(() => {
-                const initFirebase = async () => {
+                const checkAndInit = async () => {
+                    if (!window.FirebaseBridge) {
+                        setTimeout(checkAndInit, 500);
+                        return;
+                    }
+                    
+                    setStatus('connecting');
+                    const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore } = window.FirebaseBridge;
+                    
                     try {
-                        if (!window.FirebaseCore) {
-                            // ถ้า Library ยังไม่โหลด ให้รอ 1 วินาทีแล้วลองใหม่
-                            setTimeout(initFirebase, 1000);
-                            return;
-                        }
-
-                        const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore } = window.FirebaseCore;
-                        
                         const firebaseConfig = JSON.parse(__firebase_config);
                         const app = initializeApp(firebaseConfig);
                         const auth = getAuth(app);
                         const db = getFirestore(app);
-                        const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-work-log';
+                        
+                        authRef.current = auth;
+                        dbRef.current = db;
 
-                        firebaseRef.current = { auth, db, appId };
-
-                        // ดำเนินการ Login
+                        // ล็อกอินแบบข้ามขั้นตอนถ้ามี Token หรือล็อกอินแบบ Anonymous
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await signInWithCustomToken(auth, __initial_auth_token);
                         } else {
@@ -88,41 +78,42 @@
                             if (u) {
                                 setUser(u);
                                 setStatus('ready');
+                            } else {
+                                setStatus('error');
                             }
                         });
                     } catch (err) {
-                        console.error("Firebase Init Error:", err);
+                        console.error("Firebase Auth Error:", err);
                         setStatus('error');
                     }
                 };
 
-                initFirebase();
+                checkAndInit();
             }, []);
 
-            // 2. Real-time Data Listener
+            // 2. ดึงข้อมูลรายงานจาก Cloud
             useEffect(() => {
-                if (!user || !firebaseRef.current) return;
-                
-                const { db, appId } = firebaseRef.current;
-                const { collection, query, onSnapshot, orderBy } = window.FirebaseCore;
+                if (status !== 'ready' || !user || !dbRef.current) return;
+
+                const { collection, query, onSnapshot, orderBy } = window.FirebaseBridge;
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
                 
                 const q = query(
-                    collection(db, 'artifacts', appId, 'public', 'data', 'work_reports'), 
+                    collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'work_reports'),
                     orderBy('timestamp', 'desc')
                 );
-                
-                const unsubscribe = onSnapshot(q, 
-                    (snapshot) => {
-                        setReports(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-                    }, 
-                    (err) => {
-                        console.error("Firestore Listen Error:", err);
-                    }
-                );
-                return () => unsubscribe();
-            }, [user]);
 
-            const handleImageUpload = (e) => {
+                const unsubscribe = onSnapshot(q, (snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setReports(data);
+                }, (err) => {
+                    console.error("Firestore Listen Error:", err);
+                });
+
+                return () => unsubscribe();
+            }, [status, user]);
+
+            const handleImage = (e) => {
                 const file = e.target.files[0];
                 if (file) {
                     const reader = new FileReader();
@@ -131,40 +122,13 @@
                 }
             };
 
-            const analyzeWithAI = async () => {
-                if (!form.image) return;
-                setAiProcessing(true);
-                try {
-                    const apiKey = ""; // API Key 
-                    const payload = {
-                        contents: [{ 
-                            parts: [
-                                { text: "วิเคราะห์ภาพหน้างานนี้: บรรทัดแรกสรุปหัวข้อสั้นๆ (ไม่เกิน 6 คำ), บรรทัดต่อมาสรุปสิ่งที่เห็นในภาพเป็นประโยคบอกเล่า 2 ประโยค" },
-                                { inlineData: { mimeType: "image/png", data: form.image.split(',')[1] } }
-                            ] 
-                        }]
-                    };
-                    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    const data = await res.json();
-                    const aiText = data.candidates[0].content.parts[0].text;
-                    const lines = aiText.split('\n').filter(l => l.trim());
-                    setForm(f => ({ ...f, title: lines[0] || f.title, detail: lines.slice(1).join(' ') || f.detail }));
-                } catch (err) {
-                    console.error("AI Error:", err);
-                }
-                setAiProcessing(false);
-            };
-
             const submitReport = async () => {
                 if (!form.title || !form.image) return;
-                const { db, appId } = firebaseRef.current;
-                const { collection, addDoc, serverTimestamp } = window.FirebaseCore;
+                const { collection, addDoc, serverTimestamp } = window.FirebaseBridge;
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                
                 try {
-                    await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'work_reports'), {
+                    await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'work_reports'), {
                         ...form,
                         userId: user.uid,
                         timestamp: serverTimestamp()
@@ -176,140 +140,122 @@
                 }
             };
 
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [status, reports, isAdding, aiProcessing]);
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [status, reports, isAdding]);
 
-            if (status === 'connecting') return (
-                <div className="h-screen flex flex-col items-center justify-center bg-white p-10 text-center">
-                    <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                    <p className="mt-6 font-bold text-slate-900 text-sm uppercase tracking-widest">กำลังเชื่อมต่อฐานข้อมูล...</p>
-                    <p className="text-slate-400 text-xs mt-2">หากค้างเกิน 10 วินาที โปรดลองรีเฟรชหน้าพรีวิว</p>
-                </div>
-            );
+            if (status === 'initializing' || status === 'connecting') {
+                return (
+                    <div className="h-screen flex flex-col items-center justify-center bg-white">
+                        <div className="w-12 h-12 border-4 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
+                        <p className="mt-6 font-bold text-slate-400 text-xs tracking-widest uppercase">กำลังเชื่อมต่อคลาวด์...</p>
+                    </div>
+                );
+            }
 
-            if (status === 'error') return (
-                <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-10 text-center">
-                    <i data-lucide="shield-off" className="w-16 h-16 text-red-500 mb-6"></i>
-                    <h2 className="text-lg font-black text-red-900 uppercase">การเชื่อมต่อล้มเหลว</h2>
-                    <p className="text-red-700 text-sm mt-3">โปรดตรวจสอบว่าเปิด <b>Anonymous Auth</b> และตั้ง <b>Rules</b> ใน Firebase ถูกต้องแล้ว</p>
-                    <button onClick={() => window.location.reload()} className="mt-8 px-8 py-4 bg-red-600 text-white rounded-2xl font-black text-xs uppercase shadow-xl shadow-red-100">ลองใหม่</button>
-                </div>
-            );
+            if (status === 'error') {
+                return (
+                    <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-8 text-center">
+                        <i data-lucide="alert-triangle" className="w-16 h-16 text-red-500 mb-6"></i>
+                        <h1 className="text-xl font-black text-red-900 mb-2">เชื่อมต่อล้มเหลว</h1>
+                        <p className="text-red-700 text-sm mb-8">โปรดตรวจสอบว่าได้ตั้งค่า Firebase Rules และ Anonymous Auth ในโปรเจกต์ 'MyWorkLog' แล้ว</p>
+                        <button onClick={() => window.location.reload()} className="px-10 py-4 bg-red-600 text-white rounded-2xl font-bold uppercase tracking-widest text-xs">ลองอีกครั้ง</button>
+                    </div>
+                );
+            }
 
             return (
-                <div className="app-card relative">
-                    <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md px-6 py-5 border-b border-slate-100 flex justify-between items-center">
+                <div className="app-card">
+                    {/* Header */}
+                    <header className="px-6 py-6 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-md sticky top-0 z-40">
                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                            <div className="w-10 h-10 bg-slate-900 rounded-2xl flex items-center justify-center text-white">
                                 <i data-lucide="zap" className="w-5 h-5 fill-current"></i>
                             </div>
-                            <h1 className="text-xl font-black text-slate-900 tracking-tighter uppercase italic">Work<span className="text-indigo-600">Sync</span></h1>
+                            <h1 className="text-xl font-black text-slate-900 italic tracking-tighter">WORK<span className="text-indigo-600">SYNC</span></h1>
                         </div>
-                        <div className="flex items-center gap-2 bg-green-50 px-3 py-1 rounded-full border border-green-100">
-                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
-                            <span className="text-[10px] font-bold text-green-600 uppercase">Online</span>
-                        </div>
+                        <div className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-widest">Online</div>
                     </header>
 
-                    <main className="flex-1 p-6 space-y-8 pb-32">
+                    {/* Timeline */}
+                    <main className="p-6 pb-32 space-y-8">
                         {reports.length === 0 ? (
-                            <div className="py-24 text-center">
-                                <div className="w-20 h-20 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
-                                    <i data-lucide="layout" className="w-8 h-8 text-slate-200"></i>
+                            <div className="py-20 text-center">
+                                <div className="w-16 h-16 bg-slate-50 rounded-3xl flex items-center justify-center mx-auto mb-4 text-slate-200">
+                                    <i data-lucide="image" className="w-8 h-8"></i>
                                 </div>
-                                <h3 className="text-slate-900 font-bold text-sm uppercase tracking-widest">ยังไม่มีบันทึกงาน</h3>
-                                <p className="text-slate-400 text-xs mt-2">ถ่ายภาพหน้างานเพื่อเริ่มสร้างรายงานฉบับแรก</p>
+                                <p className="text-slate-400 text-sm font-medium">ยังไม่มีข้อมูลในคลาวด์</p>
                             </div>
                         ) : (
-                            reports.map((report) => (
-                                <div key={report.id} className="animate-pop bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden hover:shadow-xl transition-all duration-300">
-                                    <img src={report.image} className="w-full h-56 object-cover" />
+                            reports.map(item => (
+                                <div key={item.id} className="animate-pop bg-white border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm hover:shadow-xl transition-all duration-500">
+                                    <img src={item.image} className="w-full h-56 object-cover" />
                                     <div className="p-6">
-                                        <div className="flex justify-between items-start mb-3">
-                                            <h3 className="font-bold text-lg text-slate-900 leading-tight">{report.title}</h3>
-                                            <span className="text-[9px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded-md">
-                                                {report.timestamp ? new Date(report.timestamp.seconds * 1000).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : 'Pending'}
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h3 className="font-bold text-slate-900">{item.title}</h3>
+                                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter">
+                                                {item.timestamp ? new Date(item.timestamp.seconds * 1000).toLocaleTimeString('th-TH') : '...'}
                                             </span>
                                         </div>
-                                        <p className="text-slate-500 text-sm leading-relaxed">{report.detail}</p>
+                                        <p className="text-sm text-slate-500 leading-relaxed">{item.detail}</p>
                                     </div>
                                 </div>
                             ))
                         )}
                     </main>
 
-                    <div className="fixed bottom-10 left-0 right-0 px-6 flex justify-center z-50 pointer-events-none">
+                    {/* Add Button */}
+                    <div className="fixed bottom-8 left-0 right-0 px-6 flex justify-center z-50">
                         <button 
                             onClick={() => setIsAdding(true)}
-                            className="pointer-events-auto bg-slate-900 text-white px-10 py-5 rounded-full shadow-2xl flex items-center gap-3 font-black text-sm uppercase tracking-widest active:scale-95 transition-all hover:bg-indigo-600"
+                            className="bg-slate-900 text-white px-8 py-5 rounded-full shadow-2xl flex items-center gap-3 font-bold text-sm uppercase tracking-[0.2em] active:scale-95 transition-transform"
                         >
-                            <i data-lucide="camera" className="w-5 h-5"></i>
-                            Capture Work
+                            <i data-lucide="plus-circle" className="w-5 h-5"></i>
+                            New Report
                         </button>
                     </div>
 
+                    {/* Modal */}
                     {isAdding && (
-                        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-                            <div className="bg-white w-full max-w-lg rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl animate-pop max-h-[95vh] overflow-y-auto">
+                        <div className="fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-end sm:items-center justify-center">
+                            <div className="bg-white w-full max-w-lg rounded-t-[3rem] sm:rounded-[3rem] p-8 shadow-2xl animate-pop max-h-[90vh] overflow-y-auto">
                                 <div className="flex justify-between items-center mb-8">
-                                    <h2 className="text-xl font-black uppercase text-slate-900 tracking-tight">เพิ่มรายงานใหม่</h2>
-                                    <button onClick={() => setIsAdding(false)} className="p-2 bg-slate-100 rounded-full hover:bg-red-50 hover:text-red-500 transition-colors">
-                                        <i data-lucide="x" className="w-5 h-5"></i>
-                                    </button>
+                                    <h2 className="text-xl font-black text-slate-900 uppercase tracking-tight">เพิ่มบันทึกใหม่</h2>
+                                    <button onClick={() => setIsAdding(false)} className="bg-slate-100 p-2 rounded-full"><i data-lucide="x" className="w-5 h-5"></i></button>
                                 </div>
-
+                                
                                 <div className="space-y-6">
-                                    <div className="aspect-video bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-100 flex items-center justify-center relative overflow-hidden group">
+                                    <div className="aspect-video bg-slate-50 rounded-[2rem] border-4 border-dashed border-slate-100 flex items-center justify-center overflow-hidden">
                                         {form.image ? (
-                                            <>
-                                                <img src={form.image} className="w-full h-full object-cover" />
-                                                <button 
-                                                    onClick={analyzeWithAI}
-                                                    disabled={aiProcessing}
-                                                    className="absolute bottom-4 right-4 bg-white/95 px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-2 text-[10px] font-black uppercase text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all border border-indigo-50"
-                                                >
-                                                    {aiProcessing ? <i data-lucide="loader-2" className="animate-spin w-4 h-4"></i> : <i data-lucide="sparkles" className="w-4 h-4"></i>}
-                                                    {aiProcessing ? "กำลังวิเคราะห์..." : "AI เขียนรายงานให้"}
-                                                </button>
-                                            </>
+                                            <img src={form.image} className="w-full h-full object-cover" />
                                         ) : (
-                                            <label className="flex flex-col items-center gap-3 cursor-pointer py-10 w-full h-full justify-center">
-                                                <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center shadow-sm">
-                                                    <i data-lucide="plus" className="w-8 h-8 text-slate-300"></i>
-                                                </div>
-                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">เลือกรูปถ่ายหน้างาน</span>
-                                                <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
+                                            <label className="cursor-pointer flex flex-col items-center">
+                                                <i data-lucide="camera" className="w-10 h-10 text-slate-200 mb-2"></i>
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">อัปโหลดรูปภาพ</span>
+                                                <input type="file" accept="image/*" className="hidden" onChange={handleImage} />
                                             </label>
                                         )}
                                     </div>
 
                                     <div className="space-y-4">
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-slate-300 uppercase tracking-widest ml-4">หัวข้อ</label>
-                                            <input 
-                                                type="text" 
-                                                placeholder="หัวข้อรายงาน..." 
-                                                className="w-full p-5 bg-slate-50 rounded-2xl outline-none font-bold text-slate-800 transition-all border-2 border-transparent focus:border-indigo-100 focus:bg-white"
-                                                value={form.title}
-                                                onChange={e => setForm({...form, title: e.target.value})}
-                                            />
-                                        </div>
-                                        <div className="space-y-1">
-                                            <label className="text-[10px] font-bold text-slate-300 uppercase tracking-widest ml-4">รายละเอียด</label>
-                                            <textarea 
-                                                placeholder="รายละเอียดรายงาน..." 
-                                                className="w-full p-5 bg-slate-50 rounded-2xl outline-none min-h-[120px] text-slate-600 text-sm leading-relaxed transition-all border-2 border-transparent focus:border-indigo-100 focus:bg-white"
-                                                value={form.detail}
-                                                onChange={e => setForm({...form, detail: e.target.value})}
-                                            ></textarea>
-                                        </div>
+                                        <input 
+                                            placeholder="หัวข้อรายงาน"
+                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none font-bold text-slate-900 focus:bg-white border-2 border-transparent focus:border-indigo-100"
+                                            value={form.title}
+                                            onChange={e => setForm({...form, title: e.target.value})}
+                                        />
+                                        <textarea 
+                                            placeholder="รายละเอียด..."
+                                            className="w-full p-5 bg-slate-50 rounded-2xl outline-none text-slate-600 min-h-[120px] focus:bg-white border-2 border-transparent focus:border-indigo-100"
+                                            value={form.detail}
+                                            onChange={e => setForm({...form, detail: e.target.value})}
+                                        ></textarea>
                                     </div>
 
                                     <button 
                                         onClick={submitReport}
                                         disabled={!form.title || !form.image}
-                                        className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black uppercase tracking-[0.3em] text-xs shadow-2xl disabled:opacity-20 transition-all active:scale-95 hover:bg-indigo-600"
+                                        className="w-full py-6 bg-slate-900 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs disabled:opacity-20 shadow-xl"
                                     >
-                                        บันทึกลงคลาวด์
+                                        บันทึกลง Cloud
                                     </button>
                                 </div>
                             </div>
