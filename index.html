@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>WorkSync Pro - AI Smart QC</title>
+    <title>WorkSync AI - Next Gen QC</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -11,20 +11,57 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700;800&display=swap');
-        body { font-family: 'Sarabun', sans-serif; background-color: #f8fafc; color: #0f172a; }
-        .order-card { background: white; border-radius: 2rem; border: 1px solid #e2e8f0; transition: all 0.3s; }
-        .qc-passed { border-left: 8px solid #22c55e; }
-        .qc-rejected { border-left: 8px solid #ef4444; }
-        .qc-pending { border-left: 8px solid #e2e8f0; }
-        .star-active { color: #f59e0b; fill: #f59e0b; }
-        .star-inactive { color: #cbd5e1; }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        @keyframes sparkle {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.7; transform: scale(1.1); }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Sarabun:wght@300;400;600;700&display=swap');
+        
+        :root {
+            --primary: #6366f1;
+            --primary-light: #eef2ff;
+            --glass-bg: rgba(255, 255, 255, 0.7);
+            --glass-border: rgba(255, 255, 255, 0.4);
         }
-        .animate-sparkle { animation: sparkle 2s infinite; }
+
+        body { 
+            font-family: 'Plus Jakarta Sans', 'Sarabun', sans-serif; 
+            background-color: #f1f5f9; 
+            color: #1e293b;
+            background-image: radial-gradient(circle at 0% 0%, #e0e7ff 0%, transparent 25%), 
+                              radial-gradient(circle at 100% 100%, #fef3c7 0%, transparent 25%);
+            background-attachment: fixed;
+        }
+
+        .glass {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+        }
+
+        .card-shadow {
+            box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.04), 0 4px 12px -3px rgba(0, 0, 0, 0.02);
+        }
+
+        .order-card {
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .order-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px -10px rgba(99, 102, 241, 0.12);
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 5px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+
+        @keyframes pulse-soft {
+            0%, 100% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.05); opacity: 0.8; }
+        }
+        .animate-ai { animation: pulse-soft 3s infinite ease-in-out; }
     </style>
 </head>
 <body>
@@ -42,20 +79,19 @@
         const { useState, useEffect, useRef } = React;
 
         const App = () => {
-            const apiKey = ""; // API Key provided by the environment
+            const apiKey = ""; 
             const [user, setUser] = useState(null);
             const [orders, setOrders] = useState([]);
             const [isAdding, setIsAdding] = useState(false);
-            const [isSaving, setIsSaving] = useState(false);
             const [isAnalyzing, setIsAnalyzing] = useState(false);
             const [qcModal, setQcModal] = useState(null);
+            const [activeTab, setActiveTab] = useState('all'); // all, pending, passed, rejected
             const [showInsights, setShowInsights] = useState(false);
             const [aiInsights, setAiInsights] = useState("");
-            const [activePreview, setActivePreview] = useState(null);
             const [form, setForm] = useState({ title: '', detail: '', tempImages: [], aiAnalysis: '' });
             
             const dbRef = useRef(null);
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'worksync-ai-qc-v1';
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'worksync-ai-v2-premium';
 
             useEffect(() => {
                 const init = async () => {
@@ -92,15 +128,10 @@
                 });
             }, [user]);
 
-            // Gemini API Wrapper
             const callGemini = async (prompt, imageData = null, retries = 5) => {
                 const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-                
                 let parts = [{ text: prompt }];
-                if (imageData) {
-                    parts.push({ inlineData: { mimeType: "image/png", data: imageData.split(',')[1] } });
-                }
-
+                if (imageData) parts.push({ inlineData: { mimeType: "image/png", data: imageData.split(',')[1] } });
                 const contents = [{ role: "user", parts }];
 
                 for (let i = 0; i < retries; i++) {
@@ -111,7 +142,7 @@
                             body: JSON.stringify({ contents })
                         });
                         const data = await response.json();
-                        return data.candidates?.[0]?.content?.parts?.[0]?.text || "ขออภัย ไม่สามารถประมวลผลได้ในขณะนี้";
+                        return data.candidates?.[0]?.content?.parts?.[0]?.text || "ประมวลผลไม่สำเร็จ";
                     } catch (error) {
                         if (i === retries - 1) throw error;
                         await new Promise(r => setTimeout(r, Math.pow(2, i) * 1000));
@@ -119,305 +150,191 @@
                 }
             };
 
-            const analyzeWithAI = async () => {
-                if (form.tempImages.length === 0) return;
-                setIsAnalyzing(true);
-                try {
-                    const analysis = await callGemini(
-                        "วิเคราะห์รูปภาพนี้เพื่อการควบคุมคุณภาพ (QC) ระบุรายละเอียด ความสะอาด หรือตำหนิที่เห็นได้ชัด สรุปเป็นภาษาไทยในโทนที่เป็นมืออาชีพและกระชับ",
-                        form.tempImages[0]
-                    );
-                    setForm(prev => ({ ...prev, aiAnalysis: analysis }));
-                } catch (e) {
-                    console.error(e);
-                } finally {
-                    setIsAnalyzing(false);
-                }
+            const filteredOrders = orders.filter(o => {
+                if (activeTab === 'all') return true;
+                return o.qcStatus === activeTab;
+            });
+
+            const stats = {
+                total: orders.length,
+                passed: orders.filter(o => o.qcStatus === 'passed').length,
+                rejected: orders.filter(o => o.qcStatus === 'rejected').length,
+                pending: orders.filter(o => o.qcStatus === 'pending' || !o.qcStatus).length,
             };
 
-            const improveContentWithAI = async () => {
-                if (!form.title) return;
-                setIsAnalyzing(true);
-                try {
-                    const prompt = `ช่วยปรับปรุงชื่อออเดอร์ "${form.title}" และรายละเอียด "${form.detail}" ให้ดูเป็นมืออาชีพและชัดเจนมากขึ้นสำหรับการทำงานในระบบ QC ตอบกลับเป็นรูปแบบ JSON { "title": "...", "detail": "..." } เท่านั้น และเป็นภาษาไทย`;
-                    const resultText = await callGemini(prompt);
-                    try {
-                        const cleanedJson = resultText.replace(/```json|```/g, "").trim();
-                        const data = JSON.parse(cleanedJson);
-                        setForm(prev => ({ ...prev, title: data.title, detail: data.detail }));
-                    } catch (err) {
-                        setForm(prev => ({ ...prev, detail: resultText }));
-                    }
-                } catch (e) {
-                    console.error(e);
-                } finally {
-                    setIsAnalyzing(false);
-                }
-            };
-
-            const generateAIFeedback = async () => {
-                const rating = qcModal.tempRating || qcModal.qcRating || 0;
-                const status = qcModal.status;
-                setIsAnalyzing(true);
-                try {
-                    const prompt = `เขียนข้อเสนอแนะสำหรับการตรวจสอบคุณภาพ (QC) เป็นภาษาไทย สำหรับงานที่ได้ ${rating}/5 ดาว และสถานะคือ ${status === 'passed' ? 'ผ่าน' : 'ไม่ผ่าน'} โดยให้คำแนะนำที่สร้างสรรค์และเป็นมืออาชีพ`;
-                    const feedback = await callGemini(prompt);
-                    setQcModal(prev => ({ ...prev, tempNote: feedback }));
-                } catch (e) {
-                    console.error(e);
-                } finally {
-                    setIsAnalyzing(false);
-                }
-            };
-
-            const generateOverallInsights = async () => {
-                if (orders.length === 0) return;
-                setIsAnalyzing(true);
-                setShowInsights(true);
-                try {
-                    const orderSummary = orders.map(o => `ออเดอร์: ${o.title}, สถานะ QC: ${o.qcStatus}, คะแนน: ${o.qcRating}`).join("\n");
-                    const prompt = `จากข้อมูลออเดอร์ดังนี้:\n${orderSummary}\nช่วยสรุปภาพรวมคุณภาพงาน (Insights) ปัญหาที่พบบ่อย และคำแนะนำในการพัฒนาทีมงานในอนาคต สรุปเป็นภาษาไทยแบบ Bullet points`;
-                    const insights = await callGemini(prompt);
-                    setAiInsights(insights);
-                } catch (e) {
-                    setAiInsights("ไม่สามารถดึงข้อมูลได้ในขณะนี้");
-                } finally {
-                    setIsAnalyzing(false);
-                }
-            };
-
-            const saveQC = async (qcData) => {
+            const saveQC = async (status, rating, note) => {
                 try {
                     const { doc, updateDoc } = window.FB;
                     await updateDoc(doc(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders', qcModal.id), {
-                        qcStatus: qcData.status,
-                        qcRating: qcData.rating,
-                        qcNote: qcData.note,
-                        status: qcData.status === 'passed' ? 'done' : 'process'
+                        qcStatus: status,
+                        qcRating: rating,
+                        qcNote: note,
                     });
                     setQcModal(null);
-                } catch (e) { alert(e.message); }
+                } catch (e) { console.error(e); }
             };
 
-            const saveOrder = async () => {
-                if (!form.title) return;
-                setIsSaving(true);
-                try {
-                    const { collection, addDoc, serverTimestamp } = window.FB;
-                    const orderRef = await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders'), {
-                        title: form.title,
-                        detail: form.detail,
-                        aiAnalysis: form.aiAnalysis,
-                        timestamp: serverTimestamp(),
-                        uid: user.uid,
-                        qcStatus: 'pending'
-                    });
-                    for (const src of form.tempImages) {
-                        await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders', orderRef.id, 'images'), { src });
-                    }
-                    setForm({ title: '', detail: '', tempImages: [], aiAnalysis: '' });
-                    setIsAdding(false);
-                } catch (e) { alert(e.message); } finally { setIsSaving(false); }
-            };
-
-            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [orders, isAdding, qcModal, isAnalyzing, showInsights]);
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); }, [orders, isAdding, qcModal, activeTab, showInsights]);
 
             return (
-                <div className="min-h-screen pb-20">
-                    <nav className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-slate-200 px-6 py-4 flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                            <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
-                                <i data-lucide="sparkles" className="animate-sparkle w-6 h-6"></i>
+                <div className="flex h-screen overflow-hidden">
+                    {/* Sidebar */}
+                    <aside className="w-20 lg:w-64 glass border-r border-slate-200 hidden md:flex flex-col p-4">
+                        <div className="flex items-center gap-3 px-3 py-6 mb-8">
+                            <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-indigo-200">
+                                <i data-lucide="zap" className="w-6 h-6"></i>
                             </div>
-                            <h1 className="font-black text-xl tracking-tight uppercase italic">WorkSync <span className="text-indigo-600">Smart QC</span></h1>
+                            <span className="font-extrabold text-xl hidden lg:block">WorkSync<span className="text-indigo-600">.AI</span></span>
                         </div>
-                        <div className="flex gap-2">
-                            <button onClick={generateOverallInsights} className="p-2.5 bg-slate-100 text-slate-600 rounded-2xl hover:bg-indigo-50 hover:text-indigo-600 transition-all">
-                                <i data-lucide="line-chart" className="w-5 h-5"></i>
-                            </button>
-                            <button onClick={() => setIsAdding(true)} className="bg-indigo-600 text-white px-6 py-2.5 rounded-2xl font-bold text-sm shadow-lg shadow-indigo-200 hover:scale-105 transition-transform">
-                                + เพิ่มงาน
-                            </button>
-                        </div>
-                    </nav>
 
-                    <main className="p-6 max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {orders.map(o => (
-                            <div key={o.id} className={`order-card p-6 flex flex-col qc-${o.qcStatus || 'pending'} hover:shadow-xl transition-shadow`}>
-                                <div className="flex justify-between items-start mb-4">
-                                    <div className="flex-1 pr-4">
-                                        <h3 className="font-black text-slate-900 leading-tight text-lg">{o.title}</h3>
-                                        <div className="flex gap-1 mt-1">
-                                            {[1, 2, 3, 4, 5].map(star => (
-                                                <i key={star} data-lucide="star" className={`w-3.5 h-3.5 ${star <= (o.qcRating || 0) ? 'star-active' : 'star-inactive'}`}></i>
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <button onClick={() => setQcModal(o)} className="p-2.5 bg-slate-50 hover:bg-indigo-50 text-slate-400 hover:text-indigo-600 rounded-2xl transition-all border border-slate-100">
-                                        <i data-lucide="clipboard-check" className="w-5 h-5"></i>
-                                    </button>
-                                </div>
-                                <p className="text-sm text-slate-500 mb-4 line-clamp-2">{o.detail || '-'}</p>
-                                
-                                <div className="grid grid-cols-4 gap-2 mb-4">
-                                    {o.images?.slice(0, 4).map((img, i) => (
-                                        <div key={i} className="aspect-square rounded-xl overflow-hidden cursor-pointer hover:opacity-80 transition-opacity ring-1 ring-slate-100" onClick={() => setActivePreview(img)}>
-                                            <img src={img} className="w-full h-full object-cover" />
-                                        </div>
-                                    ))}
-                                </div>
+                        <nav className="flex-1 space-y-2">
+                            {[
+                                { id: 'all', label: 'Dashboard', icon: 'layout-grid' },
+                                { id: 'pending', label: 'ตรวจงาน', icon: 'clock' },
+                                { id: 'passed', label: 'ผ่านแล้ว', icon: 'check-circle' },
+                                { id: 'rejected', label: 'รอแก้ไข', icon: 'alert-circle' },
+                            ].map(tab => (
+                                <button 
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    className={`w-full flex items-center gap-3 p-3.5 rounded-2xl transition-all ${activeTab === tab.id ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'text-slate-500 hover:bg-slate-100'}`}
+                                >
+                                    <i data-lucide={tab.icon} className="w-5 h-5"></i>
+                                    <span className="font-semibold text-sm hidden lg:block">{tab.label}</span>
+                                </button>
+                            ))}
+                        </nav>
 
-                                {o.aiAnalysis && (
-                                    <div className="bg-indigo-50/40 p-3 rounded-2xl mb-4 border border-indigo-100/50">
-                                        <div className="flex items-center gap-1.5 mb-1">
-                                            <i data-lucide="sparkles" className="w-3 h-3 text-indigo-500"></i>
-                                            <span className="text-[10px] font-black text-indigo-500 uppercase tracking-wider">AI Pre-Analysis</span>
-                                        </div>
-                                        <p className="text-[11px] text-slate-600 leading-relaxed line-clamp-3">{o.aiAnalysis}</p>
-                                    </div>
-                                )}
-
-                                {o.qcNote && (
-                                    <div className="bg-slate-50 p-3 rounded-2xl mb-4 border border-slate-100">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">QC Feedback:</p>
-                                        <p className="text-xs text-slate-600 italic">"{o.qcNote}"</p>
-                                    </div>
-                                )}
-
-                                <div className="mt-auto flex justify-between items-center pt-4 border-t border-slate-50">
-                                    <span className={`text-[10px] font-black uppercase px-2.5 py-1.5 rounded-lg ${o.qcStatus === 'passed' ? 'bg-emerald-100 text-emerald-700' : o.qcStatus === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'}`}>
-                                        {o.qcStatus === 'passed' ? 'ผ่าน' : o.qcStatus === 'rejected' ? 'ต้องแก้ไข' : 'รอตรวจ'}
-                                    </span>
-                                    <span className="text-[10px] font-bold text-slate-400">
-                                        {o.timestamp ? new Date(o.timestamp.seconds * 1000).toLocaleDateString() : 'กำลังโหลด...'}
-                                    </span>
-                                </div>
+                        <div className="mt-auto p-4 bg-indigo-50 rounded-3xl hidden lg:block">
+                            <div className="flex items-center gap-2 mb-2">
+                                <i data-lucide="sparkles" className="w-4 h-4 text-indigo-600 animate-ai"></i>
+                                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">AI Credits</span>
                             </div>
-                        ))}
+                            <div className="h-1.5 w-full bg-indigo-100 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-600 w-3/4"></div>
+                            </div>
+                            <p className="text-[10px] text-indigo-400 mt-2 font-medium">750 / 1000 requests left</p>
+                        </div>
+                    </aside>
+
+                    {/* Main Content */}
+                    <main className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-10">
+                        <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 mb-10">
+                            <div>
+                                <h1 className="text-3xl font-black text-slate-800 tracking-tight">ระบบตรวจสอบคุณภาพอัจฉริยะ</h1>
+                                <p className="text-slate-500 text-sm mt-1">ยินดีต้อนรับ, กำลังวิเคราะห์งานล่าสุดของคุณด้วย AI</p>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <button 
+                                    onClick={() => setShowInsights(true)}
+                                    className="glass px-5 py-3 rounded-2xl text-slate-600 font-bold text-sm flex items-center gap-2 hover:bg-white transition-all card-shadow"
+                                >
+                                    <i data-lucide="brain-circuit" className="w-4 h-4 text-indigo-600"></i>
+                                    AI Summary
+                                </button>
+                                <button 
+                                    onClick={() => setIsAdding(true)}
+                                    className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 hover:bg-indigo-600 transition-all shadow-xl shadow-slate-200"
+                                >
+                                    <i data-lucide="plus" className="w-4 h-4"></i>
+                                    สร้างรายการใหม่
+                                </button>
+                            </div>
+                        </header>
+
+                        {/* Stats Row */}
+                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
+                            {[
+                                { label: 'งานทั้งหมด', val: stats.total, color: 'indigo', icon: 'box' },
+                                { label: 'รอตรวจ', val: stats.pending, color: 'amber', icon: 'loader' },
+                                { label: 'ผ่านเกณฑ์', val: stats.passed, color: 'emerald', icon: 'shield-check' },
+                                { label: 'ต้องแก้ไข', val: stats.rejected, color: 'rose', icon: 'x-circle' },
+                            ].map((s, idx) => (
+                                <div key={idx} className="glass p-6 rounded-[2rem] card-shadow">
+                                    <div className={`w-10 h-10 bg-${s.color}-100 text-${s.color}-600 rounded-xl flex items-center justify-center mb-4`}>
+                                        <i data-lucide={s.icon} className="w-5 h-5"></i>
+                                    </div>
+                                    <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">{s.label}</p>
+                                    <h2 className="text-2xl font-black mt-1">{s.val}</h2>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* Order Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                            {filteredOrders.length === 0 ? (
+                                <div className="col-span-full py-20 text-center">
+                                    <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                        <i data-lucide="package-search" className="w-8 h-8 text-slate-300"></i>
+                                    </div>
+                                    <p className="text-slate-400 font-medium italic">ไม่มีข้อมูลในหมวดหมู่นี้</p>
+                                </div>
+                            ) : filteredOrders.map(o => (
+                                <div key={o.id} className="order-card glass rounded-[2.5rem] p-6 card-shadow flex flex-col group border-l-8 border-transparent hover:border-indigo-600">
+                                    <div className="flex justify-between items-start mb-6">
+                                        <div className="flex-1 overflow-hidden">
+                                            <h3 className="font-bold text-lg text-slate-800 truncate leading-tight">{o.title}</h3>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <div className="flex gap-0.5">
+                                                    {[1,2,3,4,5].map(s => (
+                                                        <i key={s} data-lucide="star" className={`w-3 h-3 ${s <= (o.qcRating || 0) ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`}></i>
+                                                    ))}
+                                                </div>
+                                                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-tighter italic">ID: {o.id.slice(-6)}</span>
+                                            </div>
+                                        </div>
+                                        <button 
+                                            onClick={() => setQcModal(o)}
+                                            className="w-10 h-10 bg-slate-50 text-slate-400 rounded-xl flex items-center justify-center hover:bg-indigo-600 hover:text-white transition-all"
+                                        >
+                                            <i data-lucide="edit-3" className="w-4 h-4"></i>
+                                        </button>
+                                    </div>
+
+                                    <div className="grid grid-cols-3 gap-2 mb-6">
+                                        {o.images?.slice(0, 3).map((img, i) => (
+                                            <div key={i} className="aspect-[4/5] rounded-2xl overflow-hidden ring-4 ring-white shadow-sm hover:scale-105 transition-transform">
+                                                <img src={img} className="w-full h-full object-cover" />
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {o.aiAnalysis && (
+                                        <div className="bg-white/50 p-4 rounded-3xl border border-white/80 mb-6 text-xs text-slate-500 leading-relaxed italic line-clamp-2">
+                                            <span className="font-bold text-indigo-600 not-italic mr-1 block mb-1">AI Analyst:</span>
+                                            "{o.aiAnalysis}"
+                                        </div>
+                                    )}
+
+                                    <div className="mt-auto flex items-center justify-between pt-4 border-t border-slate-100">
+                                        <div className="flex items-center gap-2">
+                                            <div className={`w-2 h-2 rounded-full ${o.qcStatus === 'passed' ? 'bg-emerald-500' : o.qcStatus === 'rejected' ? 'bg-rose-500' : 'bg-amber-500 shadow-sm'}`}></div>
+                                            <span className={`text-[10px] font-black uppercase tracking-widest ${o.qcStatus === 'passed' ? 'text-emerald-600' : o.qcStatus === 'rejected' ? 'text-rose-600' : 'text-amber-600'}`}>
+                                                {o.qcStatus === 'passed' ? 'Passed' : o.qcStatus === 'rejected' ? 'Needs Fix' : 'Reviewing'}
+                                            </span>
+                                        </div>
+                                        <span className="text-[10px] font-bold text-slate-300">
+                                            {o.timestamp ? new Date(o.timestamp.seconds * 1000).toLocaleDateString('th-TH') : ''}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </main>
 
-                    {/* AI Insights Modal */}
-                    {showInsights && (
-                        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-2xl rounded-[2.5rem] p-8 shadow-2xl animate-in overflow-y-auto max-h-[85vh] scrollbar-hide">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-2xl font-black flex items-center gap-2">
-                                        <i data-lucide="line-chart" className="text-indigo-600"></i> ✨ ภาพรวมคุณภาพงาน (AI)
-                                    </h2>
-                                    <button onClick={() => setShowInsights(false)} className="p-2 hover:bg-slate-100 rounded-full transition-colors">
-                                        <i data-lucide="x" className="w-6 h-6 text-slate-400"></i>
-                                    </button>
-                                </div>
-                                
-                                {isAnalyzing ? (
-                                    <div className="flex flex-col items-center justify-center py-20 gap-4">
-                                        <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
-                                        <p className="font-bold text-slate-400 animate-pulse">AI กำลังวิเคราะห์ข้อมูล...</p>
-                                    </div>
-                                ) : (
-                                    <div className="prose prose-slate max-w-none">
-                                        <div className="bg-indigo-50/50 p-6 rounded-3xl border border-indigo-100 whitespace-pre-wrap text-slate-700 leading-relaxed text-sm">
-                                            {aiInsights}
-                                        </div>
-                                        <div className="mt-8 grid grid-cols-2 gap-4">
-                                            <div className="bg-emerald-50 p-4 rounded-2xl border border-emerald-100">
-                                                <p className="text-[10px] font-black text-emerald-600 uppercase mb-1">Pass Rate</p>
-                                                <p className="text-2xl font-black text-emerald-700">
-                                                    {orders.length ? Math.round((orders.filter(o => o.qcStatus === 'passed').length / orders.length) * 100) : 0}%
-                                                </p>
-                                            </div>
-                                            <div className="bg-amber-50 p-4 rounded-2xl border border-amber-100">
-                                                <p className="text-[10px] font-black text-amber-600 uppercase mb-1">Avg. Rating</p>
-                                                <p className="text-2xl font-black text-amber-700">
-                                                    {(orders.reduce((acc, o) => acc + (o.qcRating || 0), 0) / orders.length || 0).toFixed(1)}/5
-                                                </p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {/* QC Modal */}
-                    {qcModal && (
-                        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-md rounded-[2.5rem] p-8 shadow-2xl animate-in">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-black flex items-center gap-2">
-                                        <i data-lucide="clipboard-check" className="text-indigo-600"></i> ตรวจสอบคุณภาพ
-                                    </h2>
-                                    <button onClick={() => setQcModal(null)} className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                                        <i data-lucide="x" className="w-5 h-5 text-slate-400"></i>
-                                    </button>
-                                </div>
-                                
-                                <div className="space-y-6">
-                                    <div>
-                                        <label className="text-[10px] font-black text-slate-400 uppercase mb-3 block tracking-wider">ประเมินคุณภาพ (Rating)</label>
-                                        <div className="flex gap-3 justify-center bg-slate-50 p-5 rounded-3xl border border-slate-100">
-                                            {[1, 2, 3, 4, 5].map(star => (
-                                                <button key={star} onClick={() => setQcModal({...qcModal, tempRating: star})} className="hover:scale-110 transition-transform">
-                                                    <i data-lucide="star" className={`w-9 h-9 ${star <= (qcModal.tempRating || qcModal.qcRating || 0) ? 'star-active' : 'star-inactive'}`}></i>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-
-                                    <div>
-                                        <div className="flex justify-between items-center mb-2">
-                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">หมายเหตุ / Feedback</label>
-                                            <button 
-                                                onClick={generateAIFeedback}
-                                                disabled={isAnalyzing}
-                                                className="text-[11px] font-bold text-indigo-600 flex items-center gap-1 bg-indigo-50 px-3 py-1 rounded-full hover:bg-indigo-100 transition-colors disabled:opacity-50"
-                                            >
-                                                {isAnalyzing ? '...' : <><i data-lucide="sparkles" className="w-3.5 h-3.5 animate-sparkle"></i> ✨ AI ช่วยร่าง</>}
-                                            </button>
-                                        </div>
-                                        <textarea 
-                                            placeholder="เขียนข้อเสนอแนะที่นี่..."
-                                            className="w-full p-4 bg-slate-50 rounded-2xl border border-slate-100 outline-none focus:ring-2 ring-indigo-200 h-28 text-sm transition-all"
-                                            value={qcModal.tempNote !== undefined ? qcModal.tempNote : (qcModal.qcNote || '')}
-                                            onChange={e => setQcModal({...qcModal, tempNote: e.target.value})}
-                                        ></textarea>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <button 
-                                            onClick={() => saveQC({ status: 'rejected', rating: qcModal.tempRating || 0, note: qcModal.tempNote || '' })}
-                                            className="py-4 bg-white text-red-600 rounded-2xl font-bold border-2 border-red-50 hover:bg-red-50 transition-colors"
-                                        >
-                                            Reject
-                                        </button>
-                                        <button 
-                                            onClick={() => saveQC({ status: 'passed', rating: qcModal.tempRating || 0, note: qcModal.tempNote || '' })}
-                                            className="py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-200 hover:scale-[1.02] transition-transform"
-                                        >
-                                            Pass งาน
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Modal Add with AI Analysis */}
+                    {/* Add Modal */}
                     {isAdding && (
-                        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-md flex items-center justify-center p-4">
-                            <div className="bg-white w-full max-w-xl rounded-[2.5rem] p-8 shadow-2xl overflow-y-auto max-h-[92vh] scrollbar-hide animate-in">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h2 className="text-xl font-black">บันทึกงานใหม่</h2>
-                                    <button onClick={() => setIsAdding(false)} className="p-1 hover:bg-slate-100 rounded-full transition-colors">
-                                        <i data-lucide="x" className="w-5 h-5 text-slate-400"></i>
-                                    </button>
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-300">
+                            <div className="bg-white/90 backdrop-blur-xl w-full max-w-xl rounded-[3rem] p-10 card-shadow border border-white">
+                                <div className="flex justify-between items-center mb-10">
+                                    <h2 className="text-2xl font-black italic">NEW ORDER.</h2>
+                                    <button onClick={() => setIsAdding(false)} className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100"><i data-lucide="x"></i></button>
                                 </div>
 
                                 <div className="space-y-6">
-                                    <div className="bg-slate-50 rounded-3xl p-6 text-center border-2 border-dashed border-slate-200 hover:border-indigo-300 transition-colors group">
-                                        <label className="cursor-pointer block">
-                                            <i data-lucide="upload-cloud" className="w-10 h-10 mx-auto text-slate-300 mb-2 group-hover:text-indigo-400 transition-colors"></i>
-                                            <span className="text-xs font-black text-slate-400 uppercase tracking-widest">เลือกรูปภาพงาน</span>
+                                    <div className="flex gap-3 overflow-x-auto pb-2 custom-scrollbar">
+                                        <label className="w-24 h-24 flex-shrink-0 bg-slate-100 rounded-[2rem] flex items-center justify-center cursor-pointer border-2 border-dashed border-slate-200 hover:border-indigo-400 hover:bg-indigo-50 transition-all">
+                                            <i data-lucide="plus" className="text-slate-400"></i>
                                             <input type="file" multiple className="hidden" accept="image/*" onChange={e => {
                                                 const files = Array.from(e.target.files);
                                                 files.forEach(file => {
@@ -427,71 +344,125 @@
                                                 });
                                             }} />
                                         </label>
+                                        {form.tempImages.map((img, i) => (
+                                            <img key={i} src={img} className="w-24 h-24 flex-shrink-0 rounded-[2rem] object-cover ring-4 ring-white shadow-md" />
+                                        ))}
                                     </div>
 
-                                    {form.tempImages.length > 0 && (
-                                        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                                            {form.tempImages.map((img, i) => (
-                                                <img key={i} src={img} className="w-20 h-20 rounded-2xl object-cover flex-shrink-0 ring-2 ring-white shadow-sm" />
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    <div className="flex gap-2">
-                                        {form.tempImages.length > 0 && !form.aiAnalysis && (
-                                            <button 
-                                                onClick={analyzeWithAI}
-                                                disabled={isAnalyzing}
-                                                className="flex-1 py-3 bg-indigo-50 text-indigo-600 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border border-indigo-100 hover:bg-indigo-100 transition-colors disabled:opacity-50"
-                                            >
-                                                {isAnalyzing ? '...' : <><i data-lucide="sparkles" className="w-4 h-4 animate-sparkle"></i> ✨ วิเคราะห์รูปภาพ (AI)</>}
-                                            </button>
-                                        )}
-                                        <button 
-                                            onClick={improveContentWithAI}
-                                            disabled={isAnalyzing || !form.title}
-                                            className="flex-1 py-3 bg-slate-50 text-slate-600 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 border border-slate-100 hover:bg-slate-100 transition-colors disabled:opacity-50"
-                                        >
-                                            {isAnalyzing ? '...' : <><i data-lucide="sparkles" className="w-4 h-4"></i> ✨ ปรับสำนวน (AI)</>}
-                                        </button>
-                                    </div>
-
-                                    {form.aiAnalysis && (
-                                        <div className="bg-indigo-50/50 p-5 rounded-3xl border border-indigo-100/50 animate-in">
-                                            <p className="text-[10px] font-black text-indigo-500 uppercase tracking-wider mb-2 flex items-center gap-1">
-                                                <i data-lucide="sparkles" className="w-3 h-3"></i> AI Pre-Analysis Report
-                                            </p>
-                                            <p className="text-xs text-slate-600 leading-relaxed italic">"{form.aiAnalysis}"</p>
-                                        </div>
-                                    )}
-
-                                    <div className="space-y-3">
+                                    <div className="space-y-4">
                                         <input 
-                                            placeholder="ชื่อออเดอร์" 
-                                            className="w-full p-4 bg-slate-50 rounded-2xl outline-none border border-slate-100 focus:ring-2 ring-indigo-200 font-bold transition-all shadow-sm" 
-                                            value={form.title} 
-                                            onChange={e => setForm({...form, title: e.target.value})} 
+                                            placeholder="ชื่อออเดอร์ หรือ รหัสสินค้า" 
+                                            className="w-full bg-white px-6 py-4 rounded-2xl outline-none ring-1 ring-slate-100 focus:ring-2 focus:ring-indigo-600 transition-all font-bold"
+                                            value={form.title}
+                                            onChange={e => setForm({...form, title: e.target.value})}
                                         />
                                         <textarea 
-                                            placeholder="รายละเอียดเพิ่มเติม..." 
-                                            className="w-full p-4 bg-slate-50 rounded-2xl outline-none border border-slate-100 focus:ring-2 ring-indigo-200 h-24 text-sm transition-all shadow-sm" 
-                                            value={form.detail} 
+                                            placeholder="ระบุรายละเอียดงาน..." 
+                                            className="w-full bg-white px-6 py-4 rounded-2xl outline-none ring-1 ring-slate-100 focus:ring-2 focus:ring-indigo-600 transition-all h-32 text-sm"
+                                            value={form.detail}
                                             onChange={e => setForm({...form, detail: e.target.value})}
                                         ></textarea>
                                     </div>
-                                    
-                                    <button onClick={saveOrder} className="w-full py-5 bg-indigo-600 text-white rounded-[2rem] font-black disabled:opacity-20 shadow-xl shadow-indigo-100 hover:scale-[1.01] transition-transform text-lg" disabled={!form.title || isSaving}>
-                                        {isSaving ? 'กำลังบันทึก...' : 'บันทึกรายการ'}
+
+                                    <button 
+                                        onClick={async () => {
+                                            setIsAnalyzing(true);
+                                            const { collection, addDoc, serverTimestamp } = window.FB;
+                                            const analysis = form.tempImages.length > 0 ? await callGemini("ตรวจหาสิ่งผิดปกติในรูปงาน QC นี้", form.tempImages[0]) : "";
+                                            const orderRef = await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders'), {
+                                                title: form.title,
+                                                detail: form.detail,
+                                                aiAnalysis: analysis,
+                                                timestamp: serverTimestamp(),
+                                                qcStatus: 'pending',
+                                                uid: user.uid
+                                            });
+                                            for (const src of form.tempImages) {
+                                                await addDoc(collection(dbRef.current, 'artifacts', appId, 'public', 'data', 'orders', orderRef.id, 'images'), { src });
+                                            }
+                                            setForm({ title: '', detail: '', tempImages: [], aiAnalysis: '' });
+                                            setIsAdding(false);
+                                            setIsAnalyzing(false);
+                                        }}
+                                        disabled={isAnalyzing || !form.title}
+                                        className="w-full py-5 bg-indigo-600 text-white rounded-[2rem] font-black shadow-2xl shadow-indigo-100 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
+                                    >
+                                        {isAnalyzing ? 'AI กำลังตรวจสอบรูปภาพ...' : 'บันทึกและส่งตรวจ'}
                                     </button>
                                 </div>
                             </div>
                         </div>
                     )}
 
-                    {/* Preview Image */}
-                    {activePreview && (
-                        <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-8 animate-in" onClick={() => setActivePreview(null)}>
-                            <img src={activePreview} className="max-w-full max-h-[90vh] object-contain rounded-3xl shadow-2xl ring-4 ring-white/10" />
+                    {/* QC Modal */}
+                    {qcModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in zoom-in duration-200">
+                            <div className="bg-white w-full max-w-lg rounded-[3rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                                <div className="p-8 pb-0 flex justify-between items-start">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-slate-800">QC Review Center</h2>
+                                        <p className="text-slate-400 text-sm font-medium">Order: {qcModal.title}</p>
+                                    </div>
+                                    <button onClick={() => setQcModal(null)} className="w-10 h-10 bg-slate-50 rounded-full flex items-center justify-center"><i data-lucide="x"></i></button>
+                                </div>
+                                
+                                <div className="p-8 flex-1 overflow-y-auto custom-scrollbar space-y-8">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        {qcModal.images?.map((img, i) => (
+                                            <img key={i} src={img} className="rounded-3xl object-cover w-full h-48 ring-1 ring-slate-100 shadow-sm" />
+                                        ))}
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] block">Rating Quality</label>
+                                        <div className="flex gap-4 justify-center py-4 bg-slate-50 rounded-3xl border border-slate-100">
+                                            {[1,2,3,4,5].map(s => (
+                                                <button key={s} onClick={() => setQcModal({...qcModal, tempRating: s})} className="transform transition-transform hover:scale-125">
+                                                    <i data-lucide="star" className={`w-8 h-8 ${s <= (qcModal.tempRating || qcModal.qcRating || 0) ? 'fill-amber-400 text-amber-400' : 'text-slate-200'}`}></i>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">QC Comment</label>
+                                            <button 
+                                                onClick={async () => {
+                                                    setIsAnalyzing(true);
+                                                    const res = await callGemini(`งานนี้ได้ ${qcModal.tempRating || 0} ดาว เขียนฟีดแบ็กเป็นภาษาไทยสั้นๆ กระชับ`);
+                                                    setQcModal({...qcModal, tempNote: res});
+                                                    setIsAnalyzing(false);
+                                                }}
+                                                className="text-[10px] font-bold text-indigo-600 flex items-center gap-1 bg-indigo-50 px-3 py-1.5 rounded-full"
+                                            >
+                                                <i data-lucide="sparkles" className="w-3 h-3"></i> AI ร่างคำแนะนำ
+                                            </button>
+                                        </div>
+                                        <textarea 
+                                            className="w-full bg-slate-50 p-6 rounded-3xl border border-slate-100 outline-none focus:ring-2 focus:ring-indigo-600 transition-all text-sm h-32"
+                                            value={qcModal.tempNote !== undefined ? qcModal.tempNote : (qcModal.qcNote || '')}
+                                            onChange={e => setQcModal({...qcModal, tempNote: e.target.value})}
+                                            placeholder="ระบุข้อควรระวังหรือสิ่งที่ต้องแก้ไข..."
+                                        ></textarea>
+                                    </div>
+                                </div>
+
+                                <div className="p-8 pt-0 grid grid-cols-2 gap-4">
+                                    <button 
+                                        onClick={() => saveQC('rejected', qcModal.tempRating || 0, qcModal.tempNote || '')}
+                                        className="py-5 bg-rose-50 text-rose-600 rounded-[2rem] font-black hover:bg-rose-100 transition-colors"
+                                    >
+                                        Reject
+                                    </button>
+                                    <button 
+                                        onClick={() => saveQC('passed', qcModal.tempRating || 0, qcModal.tempNote || '')}
+                                        className="py-5 bg-indigo-600 text-white rounded-[2rem] font-black shadow-xl shadow-indigo-100 hover:scale-[1.02] transition-transform"
+                                    >
+                                        Pass
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     )}
                 </div>
